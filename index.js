@@ -31,7 +31,7 @@ export function activate() {
     started=true;
     const root=node('div','mn-notebook');root.id='mnemosyne-notes';root.dataset.open='no';
     document.body.append(root);
-    const prefs={theme:'light',side:'right',position:.54,toast:'edge',nav:'top',zero:false,...bubbleDefaults};
+    const prefs={theme:'light',side:'right',position:.54,toast:'edge',nav:'top',readingMode:'plain',zero:false,...bubbleDefaults};
     try{Object.assign(prefs,JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')||'{}'));}catch{}
     const head=button('',null,'mn-head mn-glass');
     function apply(patch,persist=true) {

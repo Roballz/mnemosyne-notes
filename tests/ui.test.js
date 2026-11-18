@@ -218,6 +218,14 @@ test('从设置启用双私信拆分，再从未分类记住其中一页',async 
     const detail=await until(()=>d.querySelector('dialog[aria-label="界内·新消息 / 槐下听雨"]'));
     await until(()=>detail.querySelector('.mn-reading'));
     assert.equal(detail.querySelector('.mn-reading').textContent,'第一封');
+    const formats=[];
+    ctx.messageFormatting=text=>{formats.push(text);return text;};
+    await click(detail,'前端');
+    const frame=await until(()=>detail.querySelector('iframe'));
+    assert.deepEqual(formats,['<div data-tab="槐下听雨 · 12">第一封</div>']);
+    assert.match(frame.srcdoc,/第一封/);assert.doesNotMatch(frame.srcdoc,/第二封/);
+    assert.equal(JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')).readingMode,'frontend');
+
     await click(detail,'选择合集并记住此名称');
     const assign=d.querySelector('dialog[aria-label="将消息归入合集"]');
     assign.querySelector('input').value='槐下的私信';await click(assign,'归类并记住此名称');
