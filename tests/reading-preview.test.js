@@ -91,3 +91,13 @@ test('楼层与单条消息各自留白，基础字体不覆盖卡片自带的�
     const direct=open(source,{single:true,mode:'frontend',formatter:s=>s});await tick();
     assert.ok(direct.doc().querySelector('.mn-message-card'));
 });
+
+test('只抑制已带引号对白的自动引号，保留内嵌格式和语义引用',async()=>{
+    const html='<p><q>“甲说<b>「乙」</b>。”</q> <q>普通引用</q> “原文”</p>';
+    const ui=open(html,{mode:'frontend',formatter:s=>s});await tick();
+    const doc=ui.doc(),[quoted,semantic]=doc.querySelectorAll('q');
+    assert.ok(quoted.classList.contains('mn-literal-quotes'));
+    assert.equal(quoted.innerHTML,'“甲说<b>「乙」</b>。”');
+    assert.equal(semantic.classList.contains('mn-literal-quotes'),false);
+    assert.match(doc.querySelector('head style').textContent,/q\.mn-literal-quotes::after\{content:none\}/);
+});

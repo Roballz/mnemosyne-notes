@@ -48,3 +48,24 @@ test('旧多人规则仅安排一次候选重分类，保留历史扫描进度',
     assert.deepEqual(await db.getProgress(key),{next:1100,revision:2,revisit:0,revisitFolder:null});
     assert.equal((await db.getBook(key)).revision,2);
 });
+
+test('三级合集叠加显式人物，移动时替换继承部分，旧规则只重分类一次',async()=>{
+    const key=crypto.randomUUID();
+    await db.mutateBook(key,b=>{
+        delete b.peopleRuleVersion;
+        b.folders=[
+            {...blankFolder('甲'),person:'共同、祖辈'},
+            {...blankFolder('乙'),parent:'甲',persons:['上级','共同']},
+            {...blankFolder('丙'),parent:'乙',persons:['本级','共同'],pattern:'(邮件)'},
+            {...blankFolder('新根'),persons:['新人物']}
+        ];
+    });
+    await db.writeBatch(key,[],{next:1200,revision:1},()=>true);
+    const b=await db.getBook(key), msg={mes:'<div data-nvwa-ui="邮件">信</div>'};
+    assert.deepEqual(extract(msg,compile(b)).rows[0].people,['本级','共同','上级','祖辈']);
+    b.folders[2].parent='新根';
+    assert.deepEqual(extract(msg,compile(b)).rows[0].people,['本级','共同','新人物']);
+    assert.deepEqual(b.folders[2].persons,['本级','共同']);
+    assert.deepEqual(await db.getProgress(key),{next:1200,revision:2,revisit:0,revisitFolder:null});
+    assert.equal((await db.getBook(key)).revision,2);
+});

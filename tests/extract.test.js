@@ -13,7 +13,7 @@ const wrap=(name,body='文字')=>'<div data-nvwa-ui="'+name+'">'+body+'</div>';
 test('完整别名与正则取并集，同一块只入一次索引',()=>{
     const {rows}=run(wrap('与青岚的微信')+wrap('微信·青岚')+wrap('与玉山的微信'));
     assert.deepEqual(rows.map(r=>r.folders),[['信箱','线索'],['信箱'],['信箱']]);
-    assert.deepEqual(rows.map(r=>r.people),[['阿澄','青岚'],['阿澄'],['阿澄','玉山']]);
+    assert.deepEqual(rows.map(r=>r.people),[['阿澄'],['阿澄'],['阿澄']]);
 });
 test('完整切片保留嵌套、同楼多块和跨日时间',()=>{
     const block=wrap('微信·青岚','<div title="x > y"><span>22:01</span></div><button>备选</button>');
@@ -68,7 +68,7 @@ test('同楼标签页按独立原文范围、稳定名称和现有合集规则�
     const raw='<globalTime>初一</globalTime>'+tabs+wrap('单人私信')+'<endTime>次日</endTime>';
     const rows=run(raw,config).rows;
     assert.deepEqual(rows.map(r=>[r.name,r.slot,r.folders,r.people]),[
-        [one,0,['槐下私信'],[]],[two,1,['碑的私信'],['无字碑']],['单人私信',2,[],[]]]);
+        [one,0,['槐下私信'],[]],[two,1,['碑的私信'],[]],['单人私信',2,[],[]]]);
     assert.deepEqual(rows.slice(0,2).map(r=>[raw.slice(r.from,r.to),r.start,r.end]),[[a,'初一','次日'],[b,'初一','次日']]);
     assert.equal(run(raw.replace('· 12','· 13'),config).rows[0].name,one);
     assert.deepEqual(run(tabs,{...config,tabNames:[]}).rows.map(r=>r.name),[outer]);

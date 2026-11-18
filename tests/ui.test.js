@@ -234,3 +234,62 @@ test('从设置启用双私信拆分，再从未分类记住其中一页',async 
     await until(async()=>(await db.list(key,'block',{folder:'槐下的私信'})).rows.length===1);
     assert.deepEqual((await db.list(key,'block',{folder:''})).rows.map(r=>r.name),['界内·新消息 / 无字碑']);
 });
+
+test('未分类跨页多选一次保存别名并重分类，收藏隐藏三级时保留已选合集',async t=>{
+    const {document:d,ctx,workers}=setup();
+    ctx.getCurrentChatId=()=>'batch-picker';
+    ctx.chat=Array.from({length:39},(_,i)=>({mes:'<div data-nvwa-ui="来信'+i+'">正文</div>',send_date:i+1}));
+    const key=JSON.stringify(['character',1,'batch-picker']);
+    const {blankFolder}=await import('../lib/model.js');
+    await db.mutateBook(key,b=>{b.folders=['一','二','三'].map((n,i)=>({...blankFolder(n),parent:['','一','二'][i]}));});
+    t.after(async()=>{for(const w of workers)await w.terminate();});
+    const {activate}=await import('../index.js?batch-picker');activate();
+    const click=async(scope,label)=>(await until(()=>[...scope.querySelectorAll('button')].find(b=>b.textContent===label))).click();
+    (await until(()=>d.querySelector('#mn-open-settings'))).click();
+    const panel=d.querySelector('.mn-panel');
+    await click(panel,'消息');
+    await until(async()=>(await db.list(key,'block',{},null,40)).rows.length===39);
+    await click(panel,'未分类');await click(panel,'多选');
+    panel.querySelector('.mn-entry').click();await click(panel,'查看更多');
+    (await until(()=>panel.querySelectorAll('.mn-entry')[38])).click();
+    await click(panel,'加入合集（2）');
+    const form=d.querySelector('dialog[aria-label="将消息归入合集"]');
+    form.querySelector('.mn-select').click();await click(d.querySelector('.mn-picker'),'一 / 二 / 三');
+    await click(form,'归类并记住此名称');
+    await until(async()=>(await db.list(key,'block',{folder:'三'})).rows.length===2);
+    const book=await db.getBook(key);
+    assert.equal(book.revision,2);
+    assert.deepEqual(book.folders[2].names.sort(),['来信0','来信38']);
+
+    d.querySelector('.mn-floor-action').click();
+    let editor=await until(()=>d.querySelector('dialog[aria-label="收藏楼层"]'));
+    assert.ok(!editor.textContent.includes('一 / 二 / 三'));
+    await click(editor,'显示三级');await click(editor,'一 / 二 / 三');await click(editor,'显示三级');
+    await click(editor,'确认收藏');
+    await until(async()=>(await db.list(key,'note')).rows[0]?.folders.includes('三'));
+    d.querySelector('.mn-floor-action').click();
+    editor=await until(()=>d.querySelector('dialog[aria-label="编辑收藏"]'));
+    assert.ok(!editor.textContent.includes('一 / 二 / 三'));
+    await click(editor,'显示三级');
+    assert.equal([...editor.querySelectorAll('.mn-chip')].find(b=>b.textContent==='一 / 二 / 三').getAttribute('aria-pressed'),'true');
+});
+
+test('收藏正文的操作与楼层切换固定在阅读区外，两种显示共用内侧视窗',async()=>{
+    const {document:d,ctx}=setup();
+    const {View}=await import('../lib/view.js');
+    const root=d.createElement('main');d.body.append(root);
+    const prefs={readingMode:'plain'},view=new View(root,prefs,p=>Object.assign(prefs,p));
+    const msg={mes:'“正文”'};
+    view.engine={alive:()=>true,host:{offset:0},source:async()=>({msg,floor:5})};
+    ctx.messageFormatting=()=>'<q>“正文”</q>';
+    await view.detail({key:['chat','note'],floor:4,note:'长备注'.repeat(60)});
+    const dialog=d.querySelector('.mn-note-dialog');
+    const header=dialog.firstElementChild,toolbar=dialog.querySelector('.mn-reader-toolbar');
+    assert.ok(header.textContent.includes('编辑备注与标签'));assert.ok(header.textContent.includes('取消收藏'));
+    assert.equal(toolbar.querySelector('.mn-floor').textContent,'#5');
+    const viewport=dialog.querySelector('.mn-reader-viewport');
+    assert.ok(viewport.querySelector('.mn-reading'));
+    toolbar.querySelector('button').click();
+    await until(()=>viewport.querySelector('iframe'));assert.equal(viewport.children.length,1);
+    assert.ok(!viewport.querySelector('button'));assert.equal(dialog.querySelectorAll('.mn-modes').length,1);
+});
