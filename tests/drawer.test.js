@@ -30,3 +30,18 @@ test('垂直、反向、短滑、取消和编辑输入均保留面板',()=>{
         [[[100,100],[175,103]],'input'],[[[100,100],[175,103]],'p',true],
     ])assert.equal(gesture('right',points,target,cancel),true);
 });
+
+test('WebView 滚动区内向外触滑，触点未抬起即收回；纵向滚动仍由宿主处理',()=>{
+    for(const [side,dx,dy,open] of [['right',48,6,false],['left',-48,6,false],['right',13,62,true]]){
+        const {document,Event}=parseHTML('<body><section><div class="mn-content"><button>选择</button></div></section></body>');
+        const panel=document.querySelector('section'),item=panel.querySelector('button');
+        const view={panel,prefs:{side},opened:true,close(){this.opened=false;}};
+        enableSwipeToClose(view);
+        function touch(type,x,y){
+            const t={identifier:21,clientX:x,clientY:y};
+            item.dispatchEvent(Object.assign(new Event(type,{bubbles:true,cancelable:true}),{touches:[t],changedTouches:[t]}));
+        }
+        touch('touchstart',100,100);touch('touchmove',100+dx,100+dy);
+        assert.equal(view.opened,open);
+    }
+});

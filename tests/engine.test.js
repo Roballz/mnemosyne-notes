@@ -85,3 +85,15 @@ test('相同发送时间发生移楼时优先精确正文，取消仅删除该�
     await db.removeNote(f.key,n.id);assert.equal((await db.list(f.key,'note')).rows.length,0);
     assert.equal(data.length,2);f.engine.dispose();
 });
+
+test('删除一个合集只回读实际关联的楼层，重新分配人物并保留其他合集',async()=>{
+    const messages=Array.from({length:48},(_,i)=>({mes:'<div data-nvwa-ui="'+(i===9?'同名':'其他')+'"></div>'}));
+    const f=fixture(messages);
+    await db.mutateBook(f.key,b=>b.folders.push({...blankFolder('旧'),names:['同名'],person:'甲'},
+        {...blankFolder('留'),names:['同名','其他'],person:'乙'}));
+    await f.engine.init();f.engine.open();await idle(f.engine);f.reads.length=0;
+    f.engine.book=await db.mutateBook(f.key,b=>{b.folders=b.folders.filter(x=>x.name!=='旧');},'existing','旧');
+    f.engine.progress=await db.getProgress(f.key);f.engine.open();await idle(f.engine);
+    assert.deepEqual(f.reads,[[9,10]]);assert.equal((await db.groups(f.key,'block','folder')).includes('旧'),false);
+    assert.deepEqual(await db.groups(f.key,'block','person'),['乙']);f.engine.dispose();
+});

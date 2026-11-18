@@ -31,12 +31,12 @@ export function activate() {
     started=true;
     const root=node('div','mn-notebook');root.id='mnemosyne-notes';root.dataset.open='no';
     document.body.append(root);
-    const prefs={theme:'light',side:'right',position:.54,toast:'edge',zero:false,...bubbleDefaults};
+    const prefs={theme:'light',side:'right',position:.54,toast:'edge',nav:'top',zero:false,...bubbleDefaults};
     try{Object.assign(prefs,JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')||'{}'));}catch{}
     const head=button('',null,'mn-head mn-glass');
     function apply(patch,persist=true) {
         Object.assign(prefs,patch);
-        for(const key of ['theme','side','toast'])if(!patch || key in patch)root.dataset[key]=prefs[key];
+        for(const key of ['theme','side','toast','nav'])if(!patch || key in patch)root.dataset[key]=prefs[key];
         if(!patch || 'position' in patch)root.style.setProperty('--mn-pos',(100*prefs.position)+'%');
         applyBubble(root,head,prefs,patch);
         if(patch && persist) localStorage.setItem('mnemosyne-notes:appearance',JSON.stringify(prefs));

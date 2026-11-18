@@ -30,6 +30,7 @@
 .mn-notebook input[type=checkbox] { width:20px;height:20px;accent-color:var(--accent); }
 .mn-notebook h2,.mn-notebook h3,.mn-notebook h4,.mn-notebook p { margin:0;color:inherit; }
 .mn-notebook .mn-glass {
+    opacity:var(--mn-bubble-opacity,1);
     color:var(--mn-glass-ink); border:1px solid rgba(255,255,255,.54);
     background:radial-gradient(ellipse at 15% 0%,rgba(255,255,255,.32),transparent 54%),
         linear-gradient(153deg,rgba(var(--mn-rgb),.91),rgba(var(--mn-rgb),.76) 56%,rgba(var(--mn-rgb),.96));
@@ -135,10 +136,39 @@
 .mn-floor-host {position:relative;} .mn-floor-action {position:absolute;right:3px;top:28px;width:26px;height:26px;
     display:grid;place-items:center;padding:0;border:0;border-radius:7px;opacity:.68;background:var(--SmartThemeBlurTintColor,#263d338a);color:var(--SmartThemeBodyColor,inherit);z-index:1;}
 .mn-floor-action svg {width:15px;height:15px;} .mn-floor-action:hover,.mn-floor-action:focus-visible {opacity:1;}
-@keyframes mn-bloom {0%{opacity:0;transform:translate(var(--pop-x),7px) scale(.78);}72%{opacity:1;transform:translateY(-1px) scale(1.025);}100%{opacity:1;transform:none;}}
+@keyframes mn-bloom {0%{opacity:0;transform:translate(var(--pop-x),7px) scale(.78);}72%{opacity:var(--mn-bubble-opacity,1);transform:translateY(-1px) scale(1.025);}100%{opacity:var(--mn-bubble-opacity,1);transform:none;}}
 @media(prefers-reduced-motion:reduce){.mn-notebook *{animation:none!important;transition:none!important;}}
 .mn-notebook .mn-error {background:var(--tint);border-left:3px solid var(--accent);padding:8px 10px;border-radius:6px;}
 
 .mn-size-line {display:grid;grid-template-columns:minmax(0,1fr) 4em;gap:10px;align-items:center;}
 .mn-notebook .mn-size-line input[type=range] {accent-color:var(--accent);padding:0;border:0;height:26px;touch-action:pan-y;}
 .mn-size-value {text-align:right;font-variant-numeric:tabular-nums;color:var(--muted);}
+
+.mn-content,.mn-notebook .mn-content button,.mn-dialog-body {touch-action:pan-y pinch-zoom;}
+.mn-notebook[data-nav=bottom] .mn-nav {order:4;flex:none;margin:0 12px 8px;padding:5px;}
+.mn-notebook[data-nav=bottom] .mn-nav button {min-height:38px;}
+.mn-notebook[data-nav=bottom] .mn-status {border-top:0;padding-bottom:4px;}
+.mn-notebook .mn-select {display:block;position:relative;min-width:0;max-width:100%;padding:8px 28px 8px 12px;
+    color:var(--ink);background:var(--surface);border:1px solid var(--line);text-align:start;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.mn-notebook .mn-select::after {content:'';position:absolute;right:11px;top:43%;width:6px;height:6px;border:solid var(--muted);border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+.mn-notebook .mn-filter {gap:6px;}
+.mn-notebook .mn-filter .mn-select {flex:0 1 auto;max-width:100%;text-align:center;font-size:12px;padding:7px 17px;line-height:1.25;min-height:32px;}
+.mn-filter .mn-select::after {right:6px;width:4px;height:4px;}
+.mn-notebook .mn-picker {width:min(340px,calc(100vw - 32px));}
+.mn-picker .mn-dialog-body {gap:5px;}
+.mn-notebook .mn-option {padding:10px 14px;text-align:center;overflow-wrap:anywhere;}
+.mn-notebook .mn-option[aria-pressed=true] {background:var(--accent);color:var(--on);}
+.mn-tree {display:grid;gap:3px;}
+.mn-tree-row {display:flex;align-items:center;padding-inline-start:calc(var(--level)*14px);border-bottom:1px solid var(--line);}
+.mn-tree-row button {background:transparent;border:0;}
+.mn-tree-toggle,.mn-tree-indent {width:28px;flex:none;color:var(--muted);}
+.mn-notebook .mn-tree-toggle {padding:8px 3px;}
+.mn-notebook .mn-tree-entry {display:flex;align-items:center;gap:8px;flex:1;min-width:0;text-align:start;padding:9px 2px;overflow-wrap:anywhere;}
+.mn-tree-entry svg {width:17px;color:var(--accent);}
+.mn-notebook .mn-blacklist {align-self:center;font-size:12px;color:var(--muted);background:transparent;border:0;padding:6px 9px;}
+.mn-notebook .mn-confirm {padding:12px;background:var(--tint);border-radius:12px;}
+.mn-confirm .mn-row {margin-top:10px;justify-content:flex-end;}
+.mn-notebook .mn-danger {color:#98393c;background:var(--surface);}
+.mn-notebook[data-theme=dark] .mn-danger,.mn-notebook[data-theme=neon] .mn-danger {color:#ffadab;}
+.mn-page>.mn-row .mn-back {min-width:0;overflow-wrap:anywhere;text-align:start;}
+.mn-page>.mn-row .mn-link {flex:none;}
