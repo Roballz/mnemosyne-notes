@@ -203,7 +203,7 @@ test('从三级目录浏览到编辑删除，以及未分类详情的黑名单�
 test('从设置启用双私信拆分，再从未分类记住其中一页',async t=>{
     const {document:d,ctx,workers}=setup();
     ctx.getCurrentChatId=()=>'tab-mailbox';
-    ctx.chat=[{mes:'<div data-nvwa-ui="界内·新消息"><div data-nvwa-tabs><div data-tab="槐下听雨 · 12">第一封</div><div data-tab="无字碑 · 6">第二封</div></div></div>'}];
+    ctx.chat=[{mes:'<div data-nvwa-ui="界内·新消息" style="background:#1d2026;color:#d9d4c7"><div data-nvwa-tabs><div data-tab="槐下听雨 · 12">第一封</div><div data-tab="无字碑 · 6">第二封</div></div></div>'}];
     t.after(async()=>{for(const w of workers)await w.terminate();});
     const key=JSON.stringify(['character',1,'tab-mailbox']);
     const {activate}=await import('../index.js?tab-mailbox');activate();
@@ -222,7 +222,9 @@ test('从设置启用双私信拆分，再从未分类记住其中一页',async 
     ctx.messageFormatting=text=>{formats.push(text);return text;};
     await click(detail,'前端');
     const frame=await until(()=>detail.querySelector('iframe'));
-    assert.deepEqual(formats,['<div data-tab="槐下听雨 · 12">第一封</div>']);
+    assert.equal(formats.length,1);assert.match(formats[0],/color:#d9d4c7/);
+    assert.match(formats[0],/第一封/);assert.doesNotMatch(formats[0],/第二封|无字碑/);
+    assert.match(frame.srcdoc,/color:#d9d4c7/);
     assert.match(frame.srcdoc,/第一封/);assert.doesNotMatch(frame.srcdoc,/第二封/);
     assert.equal(JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')).readingMode,'frontend');
 

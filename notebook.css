@@ -174,3 +174,5 @@
 .mn-page>.mn-row .mn-link {flex:none;}
 .mn-reader {display:grid;gap:9px;min-width:0;}
 .mn-reader .mn-frontend {display:block;width:100%;height:260px;max-height:60dvh;border:1px solid var(--line);border-radius:10px;background:var(--surface);}
+
+.mn-floor-reader .mn-reading {box-sizing:border-box;padding:9px 12px;font-size:13px;}

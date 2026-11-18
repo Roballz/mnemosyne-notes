@@ -4,14 +4,14 @@ import { parseHTML } from 'linkedom/worker';
 import { readingModes } from '../lib/reading-preview.js';
 
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
-function open(source,{formatter,mode='plain',single=false,offset=20,floor=21}={}){
+function open(source,{formatter,mode='plain',single=false,offset=20,floor=21,full=source,from=0}={}){
     const {document}=parseHTML('<html><body><section data-theme="light"><dialog></dialog></section></body></html>');
     globalThis.document=document;
     const ctx={chat:[{},{}],messageFormatting:formatter};
     globalThis.SillyTavern={getContext:()=>ctx};
     const root=document.querySelector('section'),dialog=root.querySelector('dialog');dialog.open=true;
     const prefs={readingMode:mode},view={root,prefs,savePrefs:p=>Object.assign(prefs,p),guard:fn=>(...args)=>fn(...args)};
-    const modes=readingModes(view,dialog,source,{mes:source,name:'角色',is_user:false},floor,{host:{offset},alive:()=>true},single);
+    const modes=readingModes(view,dialog,source,{mes:full,name:'角色',is_user:false},floor,{host:{offset},alive:()=>true},single?{from,to:from+source.length}:null);
     dialog.append(modes);
     return {dialog,prefs,pick:label=>[...modes.querySelectorAll('button')].find(b=>b.textContent===label).click(),
         doc:()=>parseHTML(modes.querySelector('iframe').srcdoc).document};
@@ -57,4 +57,37 @@ test('无宿主格式化也可读原始 HTML，HTML 围栏可显示布局，切�
     slow.pick('纯文本');finish('<p>旧结果</p>');await tick();
     assert.equal(slow.dialog.querySelector('iframe'),null);
     assert.equal(slow.dialog.querySelector('.mn-reading').textContent,'纯文本');
+});
+
+test('按旧索引位置恢复选中私信的祖先和共享样式，同名、同文标签不会串页',async()=>{
+    const page='<div data-tab="甲 · 6" hidden><span style="background:var(--chip)">重复正文 $&</span></div>';
+    const other='<div data-tab="乙"><style>.other{color:pink}</style>另一人的私信</div>';
+    const full='<section class="theme"><div data-nvwa-ui="一" style="color:blue"><div data-nvwa-tabs>'+page+'</div></div>'+
+        '<div data-nvwa-ui="二" style="background:#1d2026;color:#d9d4c7"><style>.theme .mine{opacity:.9}</style>'+
+        '<div data-nvwa-tabs class="mine" style="--chip:#2a2f37">'+other+page+'</div><style>.mine span{padding:6px}</style></div></section>';
+    const formats=[];
+    const ui=open(page,{single:true,full,from:full.lastIndexOf(page),formatter:s=>{formats.push(s);return s;}});
+    assert.equal(formats.length,0);ui.pick('前端');await tick();
+    assert.equal(formats.length,1);
+    assert.ok(formats[0].includes(page));assert.doesNotMatch(formats[0],/color:blue|另一人|color:pink/);
+    const doc=ui.doc(),el=doc.querySelector('.theme [data-nvwa-ui="二"] .mine [data-tab]');
+    assert.ok(el);assert.equal(el.hasAttribute('hidden'),false);assert.equal(el.textContent,'重复正文 $&');
+    assert.match(el.parentElement.getAttribute('style'),/--chip:#2a2f37/);
+    assert.match(el.parentElement.parentElement.getAttribute('style'),/color:#d9d4c7/);
+    assert.equal(doc.querySelectorAll('.mes_text style').length,2);assert.equal(doc.querySelectorAll('.mn-tab-radio').length,0);
+    ui.pick('纯文本');assert.equal(ui.dialog.querySelector('.mn-reading').textContent,'重复正文 $&');
+    ui.pick('前端');await tick();assert.equal(formats.length,1);
+});
+
+test('楼层与单条消息各自留白，基础字体不覆盖卡片自带的字号和背景',async()=>{
+    const source='<div data-nvwa-ui="私信" style="background:#1f2025;font-size:13px"><span style="background:#473b2d">来信</span></div>';
+    const floor=open(source,{mode:'frontend',formatter:s=>s});await tick();
+    const d=floor.doc();
+    assert.ok(d.querySelector('.mn-floor-prose'));
+    assert.match(d.querySelector('head style').textContent,/\.mn-floor-prose\{padding:9px 12px\}/);
+    assert.match(d.querySelector('head style').textContent,/font:14px\/1\.65/);
+    assert.match(d.querySelector('[data-nvwa-ui]').getAttribute('style'),/background:#1f2025;font-size:13px/);
+    assert.match(d.querySelector('.mes_text span').getAttribute('style'),/#473b2d/);
+    const direct=open(source,{single:true,mode:'frontend',formatter:s=>s});await tick();
+    assert.ok(direct.doc().querySelector('.mn-message-card'));
 });
