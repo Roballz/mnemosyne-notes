@@ -100,7 +100,7 @@
 .mn-notebook .mn-primary {margin-top:5px;background:var(--accent);color:var(--on);border-color:var(--accent);font-weight:650;padding:10px;}
 .mn-notebook summary {cursor:pointer;color:var(--accent);font-weight:600;} .mn-notebook details[open]>.mn-field {margin-top:8px;}
 .mn-reading {white-space:pre-wrap;line-height:1.75;overflow-wrap:anywhere;} .mn-reading div+div {margin-top:5px;}
-.mn-reading .mn-time {text-align:center;color:var(--muted);font-size:12px;} .mn-reading .mn-outgoing {text-align:right;color:var(--accent);}
+.mn-reading .mn-time {text-align:center;color:var(--muted);font-size:.86em;} .mn-reading .mn-outgoing {text-align:right;color:var(--accent);}
 .mn-notebook .mn-toast {
     --pop-x:8px;pointer-events:auto;position:absolute;right:12px;
     bottom:calc(100% - clamp(60px,var(--mn-pos),100% - 60px) + var(--mn-head-size)*.5 + 8px);
@@ -176,3 +176,6 @@
 .mn-reader .mn-frontend {display:block;width:100%;height:260px;max-height:60dvh;border:1px solid var(--line);border-radius:10px;background:var(--surface);}
 
 .mn-floor-reader .mn-reading {box-sizing:border-box;padding:9px 12px;font-size:13px;}
+
+.mn-font-sample { padding:10px 12px;border:1px solid var(--line);border-radius:10px;line-height:1.65;overflow-wrap:anywhere; }
+.mn-font-sample + .mn-hint:empty {display:none;}
