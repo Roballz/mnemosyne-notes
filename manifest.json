@@ -1,0 +1,15 @@
+{
+  "display_name": "Mnemosyne记事簿",
+  "loading_order": 110,
+  "requires": [],
+  "optional": [],
+  "js": "index.js",
+  "css": "notebook.css",
+  "hooks": {
+    "activate": "activate"
+  },
+  "author": "Roballz",
+  "version": "0.1.0",
+  "homePage": "https://github.com/Roballz/mnemosyne-notes",
+  "auto_update": true
+}
