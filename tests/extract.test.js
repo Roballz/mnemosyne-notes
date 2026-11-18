@@ -57,3 +57,24 @@ test('过滤支持按元素与属性值精确匹配，保留同属性的其他�
         '<div data-role="letter" data-nvwa-ui="微信·青岚">内容</div>';
     const scan=run(source,b);assert.deepEqual(scan.rows.map(r=>r.name),['微信·青岚']);assert.equal(scan.unmarkedDiv,false);
 });
+
+test('同楼标签页按独立原文范围、稳定名称和现有合集规则收集',()=>{
+    const outer='界内·新消息',one=outer+' / 槐下听雨',two=outer+' / 无字碑';
+    const config={...blankBook(),tabNames:[outer],folders:[
+        {...blankFolder('槐下私信'),names:[one]}, {...blankFolder('碑的私信'),pattern:'^界内·新消息 / (无字碑)$'}]};
+    const a='<div data-tab="槐下听雨 · 12"><div title="1 > 0">甲</div><button data-tab="伪页">草稿</button></div>';
+    const b='<div data-tab="无字碑 · ６" hidden><div>乙</div></div>';
+    const tabs=wrap(outer,'<div data-nvwa-tabs>'+a+b+'</div>');
+    const raw='<globalTime>初一</globalTime>'+tabs+wrap('单人私信')+'<endTime>次日</endTime>';
+    const rows=run(raw,config).rows;
+    assert.deepEqual(rows.map(r=>[r.name,r.slot,r.folders,r.people]),[
+        [one,0,['槐下私信'],[]],[two,1,['碑的私信'],['无字碑']],['单人私信',2,[],[]]]);
+    assert.deepEqual(rows.slice(0,2).map(r=>[raw.slice(r.from,r.to),r.start,r.end]),[[a,'初一','次日'],[b,'初一','次日']]);
+    assert.equal(run(raw.replace('· 12','· 13'),config).rows[0].name,one);
+    assert.deepEqual(run(tabs,{...config,tabNames:[]}).rows.map(r=>r.name),[outer]);
+    assert.deepEqual(run(wrap(outer,'普通正文'),config).rows.map(r=>r.name),[outer]);
+    assert.deepEqual(run(wrap(outer,'<div data-nvwa-tabs><div data-tab="">占位</div></div>'),config).rows.map(r=>r.name),[outer]);
+    assert.deepEqual(run(tabs,{...config,ignoreNames:[one]}).rows.map(r=>r.name),[two]);
+    for(const extra of [{ignoreNames:[one,two]},{ignoreNames:[outer]},{ignoreAttrs:['data-nvwa-tabs']}])
+        assert.deepEqual(run(tabs,{...config,...extra}),{rows:[],unmarkedDiv:false});
+});

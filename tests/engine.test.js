@@ -97,3 +97,24 @@ test('删除一个合集只回读实际关联的楼层，重新分配人物并�
     assert.deepEqual(f.reads,[[9,10]]);assert.equal((await db.groups(f.key,'block','folder')).includes('旧'),false);
     assert.deepEqual(await db.groups(f.key,'block','person'),['乙']);f.engine.dispose();
 });
+
+test('启用标签拆分只重读候选楼层，重开沿用索引，编辑删除的子页不残留',async()=>{
+    const messages=Array.from({length:64},(_,i)=>msg(i,false));
+    const prefix='<div data-nvwa-ui="站内信"><div data-nvwa-tabs>';
+    const a='<div data-tab="甲 · 1">甲的私信正文</div>',b='<div data-tab="乙 · 2">乙的私信正文</div>';
+    messages[31].mes=prefix+a+b+'</div></div>';
+    const f=fixture(messages);await f.engine.init();f.engine.open();await idle(f.engine);f.reads.length=0;
+    f.engine.book=await db.mutateBook(f.key,book=>{book.tabNames=['站内信'];},'existing');
+    f.engine.progress=await db.getProgress(f.key);f.engine.open();await idle(f.engine);
+    assert.deepEqual(f.reads,[[31,32]]);
+    const result=(await db.list(f.key,'block')).rows;
+    assert.deepEqual(result.map(r=>r.name),['站内信 / 乙','站内信 / 甲']);
+    assert.ok(!JSON.stringify(result).includes('私信正文'));
+    const {msg:origin}=await f.engine.source(result[0]);assert.equal(origin.mes.slice(result[0].from,result[0].to),b);
+    f.engine.dispose();const next=fixture(messages,f.key);
+    await next.engine.init();next.engine.open();await idle(next.engine);
+    assert.deepEqual(next.reads,[[63,64]]);assert.deepEqual(next.calls,[]);
+    messages[31].mes=prefix+a+'</div></div>';next.engine.dirty(31,false);await idle(next.engine);
+    assert.deepEqual((await db.list(f.key,'block')).rows.map(r=>r.name),['站内信 / 甲']);
+    next.engine.dispose();
+});

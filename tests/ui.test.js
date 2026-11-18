@@ -199,3 +199,28 @@ test('从三级目录浏览到编辑删除，以及未分类详情的黑名单�
     await until(()=>!panel.textContent.includes('浮窗') && panel.textContent.includes('崔冬来信'));
     assert.equal((await db.getBook(key)).folders.some(f=>f.name==='来信'),false);
 });
+
+test('从设置启用双私信拆分，再从未分类记住其中一页',async t=>{
+    const {document:d,ctx,workers}=setup();
+    ctx.getCurrentChatId=()=>'tab-mailbox';
+    ctx.chat=[{mes:'<div data-nvwa-ui="界内·新消息"><div data-nvwa-tabs><div data-tab="槐下听雨 · 12">第一封</div><div data-tab="无字碑 · 6">第二封</div></div></div>'}];
+    t.after(async()=>{for(const w of workers)await w.terminate();});
+    const key=JSON.stringify(['character',1,'tab-mailbox']);
+    const {activate}=await import('../index.js?tab-mailbox');activate();
+    await until(()=>d.querySelector('#mn-open-settings'));d.querySelector('#mn-open-settings').click();
+    const click=async(scope,label)=>(await until(()=>[...scope.querySelectorAll('button')].find(b=>b.textContent===label))).click();
+    const panel=d.querySelector('.mn-panel');await click(panel,'设置');await click(panel,'拆分多标签消息');
+    const form=d.querySelector('dialog');form.querySelector('textarea').value='界内·新消息';await click(form,'保存');
+    await until(async()=>(await db.list(key,'block')).rows.length===2);
+    await click(panel,'消息');await click(panel,'未分类');
+    const entry=await until(()=>[...panel.querySelectorAll('.mn-entry')].find(b=>b.textContent.includes('槐下听雨')));
+    entry.click();
+    const detail=await until(()=>d.querySelector('dialog[aria-label="界内·新消息 / 槐下听雨"]'));
+    await until(()=>detail.querySelector('.mn-reading'));
+    assert.equal(detail.querySelector('.mn-reading').textContent,'第一封');
+    await click(detail,'选择合集并记住此名称');
+    const assign=d.querySelector('dialog[aria-label="将消息归入合集"]');
+    assign.querySelector('input').value='槐下的私信';await click(assign,'归类并记住此名称');
+    await until(async()=>(await db.list(key,'block',{folder:'槐下的私信'})).rows.length===1);
+    assert.deepEqual((await db.list(key,'block',{folder:''})).rows.map(r=>r.name),['界内·新消息 / 无字碑']);
+});
