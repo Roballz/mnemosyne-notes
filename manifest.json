@@ -6,10 +6,11 @@
   "js": "index.js",
   "css": "notebook.css",
   "hooks": {
-    "activate": "activate"
+    "activate": "activate",
+    "chatSurface": "registerChatSurface"
   },
   "author": "Roballz",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "homePage": "https://github.com/Roballz/mnemosyne-notes",
   "auto_update": true
 }

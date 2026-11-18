@@ -91,3 +91,44 @@ test('正常入口：气泡收藏、当场新建、多选与换批、手势、�
     const safe=reader('<script>secret</script><img src="x" onerror="noop()"><div onclick="x()">安全</div>');
     assert.equal(safe.textContent,'安全');assert.equal(safe.querySelector('script,img,[onclick]'),null);
 });
+
+test('旧宿主注册过晚后仍可恢复聊天，未进聊天也可调整两个独立气泡',async t=>{
+    const {document:d,ctx,workers}=setup();
+    let id='', registrations=0, syncs=0;
+    ctx.getCurrentChatId=()=>id;
+    globalThis.__TAURITAVERN__={api:{
+        chatSurface:{isManagedOwnershipRequired:()=>true,registerParticipant:()=>{registrations++;throw Error('registration closed');}},
+        chat:{current:{ref:()=>null,handle:()=>{throw Error('handle unavailable');},windowInfo:async()=>{syncs++;throw Error('info unavailable');}}},
+    }};
+    t.after(async()=>{delete globalThis.__TAURITAVERN__;for(const w of workers)await w.terminate();});
+    const {activate,registerChatSurface}=await import('../index.js?late-binding');
+    registerChatSurface();activate();await delay(5);
+    const root=d.querySelector('#mnemosyne-notes'),head=root.querySelector('.mn-head');
+    assert.equal(registrations,1);
+    d.querySelector('#mn-open-settings').click();
+    root.querySelector('[data-tab=settings]').click();
+    const fieldBy=label=>[...root.querySelectorAll('label')].find(el=>el.firstChild.textContent===label);
+    const style=fieldBy('外部气泡样式').querySelector('select');style.value='frost';style.onchange();
+    assert.equal(root.dataset.glass,'frost');
+    const tone=root.querySelector('[aria-label="自定义色值"]');tone.value='#99aacc';tone.onchange();
+    assert.equal(root.style.getPropertyValue('--mn-rgb'),'153,170,204');
+    const symbol=fieldBy('悬浮图标').querySelector('select');symbol.value='glyph';symbol.onchange();
+    const glyph=root.querySelector('[aria-label="自定义图标文字"]');glyph.value='🌙';glyph.onchange();
+    assert.equal(head.textContent,'🌙');
+    const headControl=root.querySelector('[aria-label="悬浮头高度"]');
+    const noticeControl=root.querySelector('[aria-label="通知单行高度"]');
+    const before=localStorage.getItem('mnemosyne-notes:appearance');
+    headControl.value='30';headControl.oninput();
+    assert.equal(root.style.getPropertyValue('--mn-head-size'),'30px');
+    assert.equal(root.style.getPropertyValue('--mn-notice-size'),'34px');
+    assert.equal(localStorage.getItem('mnemosyne-notes:appearance'),before);headControl.onchange();
+    noticeControl.value='52';noticeControl.oninput();noticeControl.onchange();
+    const saved=JSON.parse(localStorage.getItem('mnemosyne-notes:appearance'));
+    assert.deepEqual([saved.headSize,saved.noticeSize,saved.glyph],[30,52,'🌙']);assert.equal(syncs,0);
+    root.querySelector('.mn-panel [aria-label="关闭"]').click();
+    id='late-chat';head.click();
+    const dialog=await until(()=>d.querySelector('dialog'));
+    assert.ok(dialog.textContent.includes('开场线索'));assert.equal(registrations,1);
+    dialog.close();id='another-chat';ctx.chat=[{mes:'切档后的线索',send_date:2}];head.click();
+    assert.ok((await until(()=>d.querySelector('dialog'))).textContent.includes('切档后的线索'));
+});

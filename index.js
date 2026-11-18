@@ -1,25 +1,50 @@
 import { Engine } from './lib/engine.js';
 import { Host, chatKey, centeredFloor, context } from './lib/host.js';
 import { button, icon, node } from './lib/dom.js';
+import { applyBubble, bubbleDefaults } from './lib/appearance.js';
 import { View } from './lib/view.js';
 
+const surfaceState=globalThis[Symbol.for('mnemosyne-notes.surface')] ??= {};
+function mount(element) {
+    const container=element.querySelector('.mes_block')||element;
+    if(container.querySelector(':scope > .mn-floor-action'))return;
+    container.classList.add('mn-floor-host');
+    const b=button('',()=>surfaceState.bookmark?.(Number(element.getAttribute('mesid'))),'mn-floor-action');
+    b.title='收藏此楼';b.setAttribute('aria-label',b.title);b.append(icon('mark'));container.append(b);
+    return ()=>{b.remove();container.classList.remove('mn-floor-host');};
+}
+
+export function registerChatSurface() {
+    const api=globalThis.__TAURITAVERN__?.api?.chatSurface;
+    if(!api?.isManagedOwnershipRequired?.() || surfaceState.attempted)return;
+    if(typeof api.registerParticipant!=='function')return;
+    surfaceState.attempted=true;
+    try {
+        api.registerParticipant({id:'mnemosyne-notes/bookmark',protocolVersion:1,didMount:({element})=>mount(element)});
+    } catch(error) {
+        console.warn('[Mnemosyne记事簿] 楼内按钮注册失败',error);
+    }
+}
 let started=false;
 export function activate() {
     if(started || document.getElementById('mnemosyne-notes') || !document.body || !context()) return;
     started=true;
     const root=node('div','mn-notebook');root.id='mnemosyne-notes';root.dataset.open='no';
     document.body.append(root);
-    const prefs={theme:'light',side:'right',position:.54,toast:'edge',zero:false};
+    const prefs={theme:'light',side:'right',position:.54,toast:'edge',zero:false,...bubbleDefaults};
     try{Object.assign(prefs,JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')||'{}'));}catch{}
-    function apply(patch) {
+    const head=button('',null,'mn-head mn-glass');
+    function apply(patch,persist=true) {
         Object.assign(prefs,patch);
-        root.dataset.theme=prefs.theme;root.dataset.side=prefs.side;root.dataset.toast=prefs.toast;
-        root.style.setProperty('--mn-pos',(100*prefs.position)+'%');
-        if(patch) localStorage.setItem('mnemosyne-notes:appearance',JSON.stringify(prefs));
+        for(const key of ['theme','side','toast'])if(!patch || key in patch)root.dataset[key]=prefs[key];
+        if(!patch || 'position' in patch)root.style.setProperty('--mn-pos',(100*prefs.position)+'%');
+        applyBubble(root,head,prefs,patch);
+        if(patch && persist) localStorage.setItem('mnemosyne-notes:appearance',JSON.stringify(prefs));
     }
     apply();
-    const view=new View(root,prefs,apply);
-    const head=button('',null,'mn-head');head.append(icon('book'));root.append(head);
+    const view=new View(root,prefs,apply,bind);
+    root.append(head);
+    surfaceState.bookmark=view.guard(floor=>view.bookmark(floor));
     head.title='点按收藏 · 向内滑动打开记事簿 · 长按拖动停靠';
     head.setAttribute('aria-label',head.title);
     const onBookmark=view.guard(()=>view.bookmark(centeredFloor()));
@@ -61,14 +86,6 @@ export function activate() {
     head.onkeydown=ev=>{if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();view.open();}};
     document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&view.opened&&!view.modal)view.close();});
 
-    function mount(element) {
-        const container=element.querySelector('.mes_block')||element;
-        if(container.querySelector(':scope > .mn-floor-action'))return;
-        container.classList.add('mn-floor-host');
-        const b=button('',view.guard(()=>view.bookmark(Number(element.getAttribute('mesid')))),'mn-floor-action');
-        b.title='收藏此楼';b.setAttribute('aria-label',b.title);b.append(icon('mark'));container.append(b);
-        return ()=>{b.remove();container.classList.remove('mn-floor-host');};
-    }
     const surface=globalThis.__TAURITAVERN__?.api?.chatSurface;
     let observed=null, observer=null;
     const managed=surface?.isManagedOwnershipRequired?.()===true;
@@ -81,7 +98,6 @@ export function activate() {
             for(const rec of entries)for(const el of rec.addedNodes)if(el.nodeType===1&&el.matches('.mes'))mount(el);
         });observer.observe(chat,{childList:true});
     }
-    if(managed)surface.registerParticipant({id:'mnemosyne-notes/bookmark',protocolVersion:1,didMount:({element})=>mount(element)});
 
     let engine=null,binding=null;
     function menu() {
@@ -93,15 +109,22 @@ export function activate() {
     async function bind() {
         attach();menu();
         const key=chatKey();
-        if(engine?.key===key)return binding;
-        engine?.dispose();engine=null;view.setEngine(null);
-        if(!key)return;
+        if(engine && engine.key===key && !engine.disposed)return binding;
+        engine?.dispose();engine=null;
+        if(view.engine)view.setEngine(null);
+        if(!key) {
+            if(context()?.chat?.length && document.querySelector('#chat .mes[mesid]'))
+                throw Error('已读取到正文，暂未取得聊天档名，请稍后再点一次');
+            return;
+        }
         const e=new Engine(new Host(key),{changed:k=>view.changed(k),zero:()=>prefs.zero,
             notice:(floor,scan)=>view.notice(floor,scan),error:err=>view.error(err)});
         engine=e;
-        binding=e.init().then(()=>{if(engine!==e||!e.alive())return;
-            view.setEngine(e);if(view.opened)e.open();e.kick();}).catch(err=>{
-            if(engine===e){e.dispose();engine=null;view.error(err);}
+        binding=e.init().then(()=>{
+            if(engine!==e)return;
+            if(!e.alive()){e.dispose();engine=null;return;}
+            view.setEngine(e);if(view.opened)e.open();e.kick();return e;}).catch(err=>{
+            if(engine===e){e.dispose();engine=null;throw err;}
         });
         return binding;
     }
@@ -123,7 +146,8 @@ export function activate() {
         const onlyTail=prior && count<prior.total && last && prior.messages.get(count-1)===last;
         await e.reset(onlyTail?count:0,true);
     });
-    bind();
+    view.guard(bind)();
+    registerChatSurface();
 }
 // Some older frontends load the module without manifest hooks.
 async function legacyReady() {
