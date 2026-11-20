@@ -200,10 +200,25 @@
 .mn-note-dialog .mn-frontend {height:100%;max-height:none;}
 
 .mn-status,.mn-hidden-status {display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
-.mn-hidden-status {border-inline-start:1px solid var(--line);padding-inline-start:8px;white-space:nowrap;}
+.mn-hidden-status {white-space:nowrap;}
 .mn-notebook .mn-hidden-status .mn-link {font-size:inherit;padding:2px 3px;text-underline-offset:2px;text-decoration:underline;}
-.mn-hidden-total {color:var(--accent);font-variant-numeric:tabular-nums;}
-.mn-floor-section {display:grid;gap:9px;border-top:1px solid var(--line);padding-top:12px;}
+.mn-hidden-total {align-self:flex-start;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;}
+.mn-floor-dialog>.mn-row {padding:8px 14px 5px;}
+.mn-floor-dialog>.mn-row h3 {font-size:18px;}
+.mn-floor-dialog>.mn-dialog-body {gap:8px;padding:10px 14px;}
+.mn-floor-dialog .mn-hint:empty {display:none;}
+.mn-notebook .mn-floor-switch input {width:14px;height:14px;margin:0;}
 .mn-floor-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
 .mn-floor-fields .mn-primary {margin:0;}
-.mn-floor-switch {display:flex;align-items:center;gap:8px;}
+.mn-floor-switch {display:flex;align-items:center;gap:6px;min-height:25px;font-size:12px;}
+
+#mn-extension-settings>summary {display:flex;justify-content:space-between;align-items:center;cursor:pointer;list-style:none;}
+#mn-extension-settings>summary::-webkit-details-marker {display:none;}
+#mn-extension-settings[open]>summary i {transform:rotate(180deg);}
+#mn-extension-settings .mn-ext-body {display:grid;gap:8px;padding:8px 12px;}
+.mn-ext-version,.mn-version {display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+.mn-ext-version {justify-content:space-between;}
+.mn-version {justify-content:flex-end;font-size:12px;font-variant-numeric:tabular-nums;}
+.mn-notebook .mn-version {color:var(--muted);}
+.mn-version .mn-version-action {font:inherit;cursor:pointer;color:inherit;background:transparent;border:0;text-decoration:underline;padding:3px;}
+.mn-version .mn-version-action[hidden] {display:none;}

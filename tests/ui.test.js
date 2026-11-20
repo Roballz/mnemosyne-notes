@@ -11,6 +11,10 @@ async function until(fn) {
     for(let i=0;i<180;i++){const result=await fn();if(result)return result;await delay(10);}
     throw Error('等待界面或事件超时');
 }
+async function openNotebook(d) {
+    const head=await until(()=>d.querySelector('.mn-head'));
+    head.onkeydown({key:'ArrowRight',preventDefault(){}});
+}
 function setup() {
     const {document,Event,HTMLElement,HTMLSelectElement,MutationObserver}=parseHTML(
         '<html><body><div id="extensions_settings"></div><div id="chat"><div class="mes" mesid="0"><div class="mes_block"></div></div></div></body></html>');
@@ -84,7 +88,7 @@ test('正常入口：气泡收藏、当场新建、多选与换批、手势、�
     toast.click();dialog=await until(()=>d.querySelector('dialog'));
     dialog.querySelector('.mn-select').click();clickText(d.querySelector('.mn-picker'),'合集乙');clickText(dialog,'归类并记住此名称');
     await until(async()=>(await db.list(key,'block',{folder:'合集乙'})).rows.length===1);
-    clickText(d,'打开 Mnemosyne记事簿');clickText(d,'消息');await until(()=>d.querySelector('.mn-group')?.textContent==='合集乙');
+    await openNotebook(d);clickText(d,'消息');await until(()=>d.querySelector('.mn-group')?.textContent==='合集乙');
     clickText(d,'合集乙');await until(()=>d.querySelector('.mn-entry')?.textContent.includes('新信箱'));
     d.querySelector('.mn-entry').click();await until(()=>d.querySelector('.mn-reading'));
     assert.match(d.querySelector('.mn-reading').textContent,/21:08晚安/);assert.ok(!d.querySelector('.mn-reading').textContent.includes('草稿'));
@@ -105,7 +109,7 @@ test('旧宿主注册过晚后仍可恢复聊天，未进聊天也可调整两�
     registerChatSurface();activate();await delay(5);
     const root=d.querySelector('#mnemosyne-notes'),head=root.querySelector('.mn-head');
     assert.equal(registrations,1);
-    d.querySelector('#mn-open-settings').click();
+    await openNotebook(d);
     root.querySelector('[data-tab=settings]').click();
     const pick=(label,text)=>{
         root.querySelector('[aria-label="'+label+'"]').click();
@@ -164,7 +168,7 @@ test('从三级目录浏览到编辑删除，以及未分类详情的黑名单�
     const click=async(scope,label)=>{
         const item=await until(()=>[...scope.querySelectorAll('button')].find(b=>b.textContent===label));item.click();
     };
-    await until(()=>d.querySelector('#mn-open-settings'));d.querySelector('#mn-open-settings').click();
+    await openNotebook(d);
     const panel=d.querySelector('.mn-panel');
     await click(panel,'消息');
     for(const dir of ['崔冬','微信','来信'])await click(panel,dir);
@@ -207,7 +211,7 @@ test('从设置启用双私信拆分，再从未分类记住其中一页',async 
     t.after(async()=>{for(const w of workers)await w.terminate();});
     const key=JSON.stringify(['character',1,'tab-mailbox']);
     const {activate}=await import('../index.js?tab-mailbox');activate();
-    await until(()=>d.querySelector('#mn-open-settings'));d.querySelector('#mn-open-settings').click();
+    await openNotebook(d);
     const click=async(scope,label)=>(await until(()=>[...scope.querySelectorAll('button')].find(b=>b.textContent===label))).click();
     const panel=d.querySelector('.mn-panel');await click(panel,'设置');await click(panel,'拆分多标签消息');
     const form=d.querySelector('dialog');form.querySelector('textarea').value='界内·新消息';await click(form,'保存');
@@ -245,7 +249,7 @@ test('未分类跨页多选一次保存别名并重分类，收藏隐藏三级�
     t.after(async()=>{for(const w of workers)await w.terminate();});
     const {activate}=await import('../index.js?batch-picker');activate();
     const click=async(scope,label)=>(await until(()=>[...scope.querySelectorAll('button')].find(b=>b.textContent===label))).click();
-    (await until(()=>d.querySelector('#mn-open-settings'))).click();
+    await openNotebook(d);
     const panel=d.querySelector('.mn-panel');
     await click(panel,'消息');
     await until(async()=>(await db.list(key,'block',{},null,40)).rows.length===39);
@@ -302,12 +306,16 @@ test('状态栏隐藏设置可按范围操作并保留最近楼，关闭后重�
     ctx.saveChat=async()=>{saves++;};
     t.after(async()=>{for(const w of workers)await w.terminate();});
     const {activate}=await import('../index.js?visibility-panel');activate();
-    (await until(()=>d.querySelector('#mn-open-settings'))).click();
+    await openNotebook(d);
     const status=d.querySelector('.mn-status');
     await until(()=>status.textContent.includes('当前已隐藏 1 楼'));
     await until(()=>status.textContent.includes('历史已整理'));
     status.querySelector('button').click();
     const form=d.querySelector('dialog[aria-label="隐藏楼层设置"]');
+    assert.ok(status.textContent.includes('·'));
+    assert.equal(form.querySelector('.mn-dialog-body').lastElementChild,form.querySelector('.mn-hidden-total'));
+    assert.ok(form.textContent.includes('只保留最近楼层数'));
+    assert.equal(form.querySelector('h4'),null);
     const [start,end,keep]=form.querySelectorAll('input[type="number"]'),opening=form.querySelector('input[type="checkbox"]');
     assert.deepEqual([start.value,end.value,keep.value,opening.checked],['0','24','20',false]);
     const click=text=>[...form.querySelectorAll('button')].find(b=>b.textContent===text).click();
@@ -320,6 +328,68 @@ test('状态栏隐藏设置可按范围操作并保留最近楼，关闭后重�
     assert.ok(!ctx.chat[0].is_system && ctx.chat[1].is_system && !ctx.chat[5].is_system);
     form.close();d.querySelector('.mn-panel [aria-label="关闭"]').click();
     ctx.chat[12].is_system=true;
-    d.querySelector('#mn-open-settings').click();
+    await openNotebook(d);
     await until(()=>status.textContent.includes(' 5 楼'));
+});
+
+test('扩展折叠项记住悬浮按钮开关，两个版本入口共享检测和安装状态',async t=>{
+    const {document:d,ctx,workers}=setup();
+    ctx.getCurrentChatId=()=>'';
+    ctx.getRequestHeaders=()=>({'Content-Type':'application/json'});
+    const savedFetch=globalThis.fetch,calls=[];
+    let finishCheck,finishUpdate,attempt=0;
+    globalThis.fetch=async(url,options)=>{
+        calls.push([url,options]);
+        if(url.endsWith('/discover'))return Response.json([{name:'third-party/mnemosyne-notes',type:'global'}]);
+        if(url.endsWith('/version'))return new Promise(r=>{finishCheck=()=>r(Response.json({isUpToDate:false}));});
+        assert.equal(url,'/api/extensions/update');
+        if(++attempt===1)return new Response('网络中断',{status:502});
+        return new Promise(r=>{finishUpdate=()=>r(Response.json({isUpToDate:false}));});
+    };
+    t.after(async()=>{globalThis.fetch=savedFetch;for(const w of workers)await w.terminate();});
+    await import('../index.js?drawer-version');
+    const drawer=await until(()=>d.querySelector('#mn-extension-settings'));
+    assert.equal(drawer.localName,'details');assert.ok(!drawer.open);assert.equal(calls.length,0);
+    assert.equal(d.querySelector('#mn-open-settings'),null);
+    const toggle=drawer.querySelector('input'),head=d.querySelector('.mn-head');
+    assert.equal(toggle.checked,true);toggle.checked=false;toggle.onchange();
+    assert.ok(head.hidden);assert.equal(JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')).showHead,false);
+    toggle.checked=true;toggle.onchange();assert.equal(head.hidden,false);
+    drawer.open=true;drawer.dispatchEvent(new d.defaultView.Event('toggle'));
+    await until(()=>finishCheck);
+    await openNotebook(d);d.querySelector('[data-tab=settings]').click();
+    const panelRow=d.querySelector('.mn-page .mn-row');
+    const {version}=JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../manifest.json',import.meta.url),'utf8'));
+    assert.equal(panelRow.firstElementChild.textContent,'记事簿设置');
+    assert.equal(panelRow.querySelector('.mn-version span').textContent,'v'+version);
+    const buttons=[drawer,panelRow].map(el=>el.querySelector('.mn-version-action'));
+    assert.ok(buttons.every(b=>b.hidden));finishCheck();
+    await until(()=>buttons.every(b=>!b.hidden));
+    assert.equal(calls.length,2);
+    buttons[0].click();await until(()=>buttons[1].textContent==='重试更新');
+    buttons[1].click();await until(()=>finishUpdate);assert.ok(buttons.every(b=>b.disabled));
+    buttons[0].click();finishUpdate();
+    await until(()=>buttons.every(b=>b.textContent==='重载生效'));
+    assert.equal(calls.length,4);
+    for(const [,options] of calls.slice(1))assert.deepEqual(JSON.parse(options.body),{extensionName:'mnemosyne-notes',global:true});
+});
+
+test('已是最新版只显示版本号，重复打开设置复用检测结果',async t=>{
+    const {ctx}=setup();
+    ctx.getRequestHeaders=()=>({'Content-Type':'application/json'});
+    const savedFetch=globalThis.fetch,calls=[];
+    t.after(()=>{globalThis.fetch=savedFetch;});
+    globalThis.fetch=async(url,options)=>{
+        calls.push(url);
+        if(url.endsWith('/discover'))return Response.json([{name:'third-party/mnemosyne-notes',type:'local'}]);
+        assert.equal(JSON.parse(options.body).global,false);
+        return Response.json({isUpToDate:true});
+    };
+    const {NotebookVersion}=await import('../lib/extension-settings.js');
+    const version=new NotebookVersion(),row=version.row('notebook');
+    await Promise.all([version.check(),version.check()]);
+    await version.check();
+    assert.equal(calls.length,2);
+    assert.ok(row.querySelector('button').hidden);
+    assert.ok(version.row('extension').querySelector('button').hidden);
 });

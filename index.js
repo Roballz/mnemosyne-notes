@@ -2,6 +2,7 @@ import { Engine } from './lib/engine.js';
 import { Host, chatKey, centeredFloor, context } from './lib/host.js';
 import { button, icon, node } from './lib/dom.js';
 import { applyBubble, bubbleDefaults } from './lib/appearance.js';
+import { extensionSettings, NotebookVersion } from './lib/extension-settings.js';
 import { View } from './lib/view.js';
 
 const surfaceState=globalThis[Symbol.for('mnemosyne-notes.surface')] ??= {};
@@ -31,18 +32,20 @@ export function activate() {
     started=true;
     const root=node('div','mn-notebook');root.id='mnemosyne-notes';root.dataset.open='no';
     document.body.append(root);
-    const prefs={theme:'light',side:'right',position:.54,toast:'edge',nav:'top',readingMode:'plain',readingFont:'wenkai',readingSize:14,zero:false,...bubbleDefaults};
+    const prefs={showHead:true,theme:'light',side:'right',position:.54,toast:'edge',nav:'top',readingMode:'plain',readingFont:'wenkai',readingSize:14,zero:false,...bubbleDefaults};
     try{Object.assign(prefs,JSON.parse(localStorage.getItem('mnemosyne-notes:appearance')||'{}'));}catch{}
     const head=button('',null,'mn-head mn-glass');
     function apply(patch,persist=true) {
         Object.assign(prefs,patch);
         for(const key of ['theme','side','toast','nav'])if(!patch || key in patch)root.dataset[key]=prefs[key];
         if(!patch || 'position' in patch)root.style.setProperty('--mn-pos',(100*prefs.position)+'%');
+        if(!patch || 'showHead' in patch)head.hidden=prefs.showHead===false;
         applyBubble(root,head,prefs,patch);
         if(patch && persist) localStorage.setItem('mnemosyne-notes:appearance',JSON.stringify(prefs));
     }
     apply();
-    const view=new View(root,prefs,apply,bind);
+    const version=new NotebookVersion();
+    const view=new View(root,prefs,apply,bind,version);
     root.append(head);
     surfaceState.bookmark=view.guard(floor=>view.bookmark(floor));
     head.title='点按收藏 · 向内滑动打开记事簿 · 长按拖动停靠';
@@ -102,9 +105,7 @@ export function activate() {
     let engine=null,binding=null;
     function menu() {
         const wrapper=document.querySelector('#extensions_settings2')||document.querySelector('#extensions_settings');
-        if(wrapper&&!document.getElementById('mn-open-settings')){
-            const b=button('打开 Mnemosyne记事簿',()=>view.open(),'menu_button');b.id='mn-open-settings';wrapper.append(b);
-        }
+        if(wrapper&&!document.getElementById('mn-extension-settings'))wrapper.append(extensionSettings(prefs,apply,version));
     }
     async function bind() {
         attach();menu();
