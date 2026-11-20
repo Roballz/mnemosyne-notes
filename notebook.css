@@ -212,9 +212,6 @@
 .mn-floor-fields .mn-primary {margin:0;}
 .mn-floor-switch {display:flex;align-items:center;gap:6px;min-height:25px;font-size:12px;}
 
-#mn-extension-settings>summary {display:flex;justify-content:space-between;align-items:center;cursor:pointer;list-style:none;}
-#mn-extension-settings>summary::-webkit-details-marker {display:none;}
-#mn-extension-settings[open]>summary i {transform:rotate(180deg);}
 #mn-extension-settings .mn-ext-body {display:grid;gap:8px;padding:8px 12px;}
 .mn-ext-version,.mn-version {display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
 .mn-ext-version {justify-content:space-between;}
