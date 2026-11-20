@@ -293,3 +293,33 @@ test('收藏正文的操作与楼层切换固定在阅读区外，两种显示�
     await until(()=>viewport.querySelector('iframe'));assert.equal(viewport.children.length,1);
     assert.ok(!viewport.querySelector('button'));assert.equal(dialog.querySelectorAll('.mn-modes').length,1);
 });
+
+test('状态栏隐藏设置可按范围操作并保留最近楼，关闭后重开读取现状',async t=>{
+    const {document:d,ctx,workers}=setup();
+    ctx.getCurrentChatId=()=>'visibility-panel';
+    ctx.chat=Array.from({length:25},(_,i)=>({mes:'楼'+i,send_date:i}));
+    ctx.chat[0].is_system=true;let saves=0;
+    ctx.saveChat=async()=>{saves++;};
+    t.after(async()=>{for(const w of workers)await w.terminate();});
+    const {activate}=await import('../index.js?visibility-panel');activate();
+    (await until(()=>d.querySelector('#mn-open-settings'))).click();
+    const status=d.querySelector('.mn-status');
+    await until(()=>status.textContent.includes('当前已隐藏 1 楼'));
+    await until(()=>status.textContent.includes('历史已整理'));
+    status.querySelector('button').click();
+    const form=d.querySelector('dialog[aria-label="隐藏楼层设置"]');
+    const [start,end,keep]=form.querySelectorAll('input[type="number"]'),opening=form.querySelector('input[type="checkbox"]');
+    assert.deepEqual([start.value,end.value,keep.value,opening.checked],['0','24','20',false]);
+    const click=text=>[...form.querySelectorAll('button')].find(b=>b.textContent===text).click();
+    end.value='4';end.oninput();click('隐藏楼层');
+    await until(()=>form.querySelector('.mn-hidden-total').textContent.includes(' 5 楼'));
+    assert.ok(status.textContent.includes(' 5 楼'));
+    click('取消隐藏');await until(()=>status.textContent.includes(' 0 楼'));
+    opening.checked=true;opening.onchange();click('隐藏更早楼层');
+    await until(()=>status.textContent.includes(' 4 楼'));assert.equal(saves,3);
+    assert.ok(!ctx.chat[0].is_system && ctx.chat[1].is_system && !ctx.chat[5].is_system);
+    form.close();d.querySelector('.mn-panel [aria-label="关闭"]').click();
+    ctx.chat[12].is_system=true;
+    d.querySelector('#mn-open-settings').click();
+    await until(()=>status.textContent.includes(' 5 楼'));
+});

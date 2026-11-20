@@ -130,16 +130,19 @@ export function activate() {
     }
     const ctx=context(), events=ctx.eventSource, types=ctx.eventTypes||ctx.event_types;
     const on=(key,fn)=>{if(types?.[key])events.on(types[key],(...args)=>{view.guard(fn)(...args);});};
+    on('MORE_MESSAGES_LOADED',()=>{if(view.engine?.host.offset)view.floorSettings.schedule();});
     on('CHAT_CHANGED',bind);on('APP_READY',bind);
     for(const type of ['MESSAGE_RECEIVED','MESSAGE_SENT','MESSAGE_EDITED','MESSAGE_UPDATED','MESSAGE_SWIPED','GENERATION_ENDED']){
         on(type,async id=>{
             const key=chatKey();await bind();const e=engine;if(!e||e.key!==key)return;
+            if(type!=='GENERATION_ENDED')view.floorSettings.schedule();
             const floor=type==='GENERATION_ENDED' || !Number.isInteger(id) ? context().chat.length-1:id;
             if(floor>=0)e.dirty(e.host.offset+floor,true);
         });
     }
     on('MESSAGE_DELETED',async()=>{
         const key=chatKey();await bind();const e=engine;if(!e||e.key!==key)return;
+        view.floorSettings.schedule();
         const prior=e.host.tail;
         const count=await e.host.sync();if(!e.alive())return;
         const last=context().chat.at(-1);

@@ -198,3 +198,12 @@
 .mn-note-dialog .mn-reader {display:flex;flex:1;flex-direction:column;min-height:0;}
 .mn-note-dialog .mn-reader-viewport {flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;}
 .mn-note-dialog .mn-frontend {height:100%;max-height:none;}
+
+.mn-status,.mn-hidden-status {display:flex;flex-wrap:wrap;align-items:center;gap:4px 8px;}
+.mn-hidden-status {border-inline-start:1px solid var(--line);padding-inline-start:8px;white-space:nowrap;}
+.mn-notebook .mn-hidden-status .mn-link {font-size:inherit;padding:2px 3px;text-underline-offset:2px;text-decoration:underline;}
+.mn-hidden-total {color:var(--accent);font-variant-numeric:tabular-nums;}
+.mn-floor-section {display:grid;gap:9px;border-top:1px solid var(--line);padding-top:12px;}
+.mn-floor-fields {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;}
+.mn-floor-fields .mn-primary {margin:0;}
+.mn-floor-switch {display:flex;align-items:center;gap:8px;}
