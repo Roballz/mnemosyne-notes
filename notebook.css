@@ -219,3 +219,88 @@
 .mn-notebook .mn-version {color:var(--muted);}
 .mn-version .mn-version-action {font:inherit;cursor:pointer;color:inherit;background:transparent;border:0;text-decoration:underline;padding:3px;}
 .mn-version .mn-version-action[hidden] {display:none;}
+
+/* Independent workbench; loaded styles have no chat DOM selectors. */
+.mn-wb-scrim,.mn-workbench {visibility:hidden;pointer-events:none;}
+.mn-notebook .mn-wb-scrim {position:absolute;inset:0;border:0;border-radius:0;background:#04151477;opacity:0;}
+.mn-notebook[data-workbench=yes] .mn-wb-scrim {visibility:visible;pointer-events:auto;opacity:1;}
+.mn-notebook[data-workbench=yes] .mn-head {visibility:hidden;}
+.mn-workbench {position:absolute;inset:var(--top) max(10px,env(safe-area-inset-right,0px)) var(--bottom) max(10px,env(safe-area-inset-left,0px));margin-inline:auto;max-width:1120px;background:var(--paper);border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);display:flex;flex-direction:column;overflow:hidden;transform:translateY(-12px);opacity:0;transition:opacity .16s,transform .16s;}
+.mn-notebook[data-workbench=yes] .mn-workbench {visibility:visible;pointer-events:auto;transform:none;opacity:1;}
+.mn-workbench>.mn-row {padding:16px 20px 10px;flex:none;}
+.mn-wb-title h2 {font-family:"STIX Two Text","Noto Serif CJK SC",serif;font-size:23px;letter-spacing:.03em;}
+.mn-wb-title small {font-size:10px;letter-spacing:.13em;}
+.mn-wb-actions {display:flex;gap:6px;padding:0 18px 11px;overflow-x:auto;flex:none;scrollbar-width:thin;}
+.mn-wb-actions button {font-size:12px;white-space:nowrap;padding:6px 10px;}
+.mn-wb-config {display:grid;grid-template-columns:1fr 1fr;gap:10px;padding:10px 18px;border-block:1px solid var(--line);background:var(--surface);flex:none;}
+.mn-wb-config .mn-field {font-size:11px;}
+.mn-wb-config select {font-size:12px;padding:7px 9px;}
+.mn-wb-body {min-height:0;flex:1;overflow:auto;padding:20px;overscroll-behavior:contain;scrollbar-width:thin;scrollbar-color:var(--line) transparent;}
+.mn-wb-welcome {max-width:650px;margin:clamp(10px,8vh,80px) auto;display:grid;gap:17px;text-align:center;}
+.mn-wb-welcome h3 {font-size:21px;}
+.mn-wb-welcome button {justify-self:center;}
+.mn-wb-notice {margin:10px 18px 0;padding:9px 12px;border-radius:10px;background:var(--tint);font-size:12px;white-space:pre-wrap;}
+.mn-wb-task {padding:14px;border:1px solid var(--line);border-radius:14px;background:var(--surface);display:grid;gap:12px;margin-bottom:18px;}
+.mn-wb-task ol {margin:8px 0;padding-left:24px;}
+.mn-wb-task li {margin:8px 0;}
+.mn-wb-task li strong {font-size:13px;}
+.mn-wb-message {margin:14px 0 22px;max-width:900px;display:grid;gap:5px;}
+.mn-wb-user {margin-left:auto;background:var(--tint);border-radius:14px 14px 2px 14px;padding:12px 16px;max-width:85%;}
+.mn-wb-prose {white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;margin:0;line-height:1.75;}
+.mn-wb-message .mn-wb-prose {max-height:460px;overflow:auto;scrollbar-width:thin;}
+.mn-wb-live {border-left:3px solid var(--accent);padding-left:12px;max-height:460px;overflow:auto;}
+.mn-wb-report {border-top:1px solid var(--line);padding-top:16px;display:grid;gap:12px;}
+.mn-wb-composer {flex:none;margin:0 14px 12px;border:1px solid var(--line);border-radius:14px;background:var(--surface);padding:10px 12px;display:grid;gap:6px;}
+.mn-wb-composer>textarea {border:0!important;background:transparent!important;min-height:68px;max-height:180px;padding:5px 0!important;resize:vertical;}
+.mn-wb-composer select {width:auto;font-size:12px;padding:4px 6px;background:var(--tint);border:0;}
+.mn-wb-composer>.mn-row:last-child {min-height:34px;}
+.mn-wb-progress {font-size:11px;color:var(--muted);}
+.mn-notebook .mn-wb-floor-link {display:inline;padding:0 2px;border:0;border-radius:0;text-decoration:underline;text-underline-offset:3px;color:var(--accent);background:transparent;font-variant-numeric:tabular-nums;}
+.mn-notebook .mn-wb-dialog {width:min(740px,calc(100vw - 24px));}
+.mn-notebook .mn-wb-review {width:min(960px,calc(100vw - 24px));}
+.mn-wb-dialog .mn-dialog-body {overscroll-behavior:contain;}
+.mn-wb-materials {display:grid;gap:8px;}
+.mn-wb-material {display:flex;align-items:flex-start;gap:10px;border-bottom:1px solid var(--line);padding:10px 0;}
+.mn-wb-material>input {flex:none;margin-top:1px;}
+.mn-wb-material>details {flex:1;min-width:0;}
+.mn-wb-material .mn-wb-prose {max-height:240px;overflow:auto;margin:10px 0;}
+.mn-wb-material small {white-space:pre-wrap;word-break:break-word;}
+.mn-wb-properties {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:8px 0;}
+.mn-wb-properties .mn-field {font-size:12px;}
+.mn-wb-properties textarea {min-height:90px;}
+.mn-wb-channel {min-width:0;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:10px;}
+.mn-wb-channel legend {color:var(--accent);font-size:12px;}
+.mn-wb-channels {display:grid;gap:12px;}
+.mn-wb-prompt {min-height:150px!important;font-size:12px!important;}
+.mn-wb-dialog details>.mn-field {margin-top:12px;}
+.mn-wb-meta {font:11px/1.5 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted);max-height:180px;overflow:auto;}
+.mn-wb-diff {white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.75 ui-monospace,"Noto Sans CJK SC",monospace;margin:8px 0;max-height:360px;overflow:auto;background:var(--surface);padding:12px;border:1px solid var(--line);border-radius:10px;}
+.mn-wb-remove {color:#a32132;background:#f6ccd34d;text-decoration:line-through;text-decoration-thickness:1px;}
+.mn-wb-add {color:#126238;background:#bce9ca80;}
+.mn-notebook[data-theme=dark] .mn-wb-remove,.mn-notebook[data-theme=neon] .mn-wb-remove {color:#ffb4bd;background:#873c4355;}
+.mn-notebook[data-theme=dark] .mn-wb-add,.mn-notebook[data-theme=neon] .mn-wb-add {color:#9be8b9;background:#276e4b65;}
+.mn-wb-editor-wrap {position:relative;min-height:260px;height:clamp(260px,36vh,420px);background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden;}
+.mn-notebook .mn-wb-editor,.mn-wb-highlight {position:absolute;inset:0;width:100%;height:100%;margin:0;padding:12px!important;border:0!important;border-radius:0!important;white-space:pre-wrap;overflow-wrap:break-word;word-break:normal;tab-size:4;font:14px/1.75 ui-monospace,"Noto Sans CJK SC",monospace!important;letter-spacing:normal;box-sizing:border-box;scrollbar-gutter:stable;}
+.mn-wb-highlight {overflow:hidden;pointer-events:none;color:var(--ink);}
+.mn-notebook .mn-wb-editor {resize:none;overflow:auto;background:transparent!important;color:transparent;caret-color:var(--ink);text-shadow:none;scrollbar-width:thin;}
+.mn-notebook .mn-wb-editing .mn-wb-editor {color:var(--ink);}
+.mn-wb-editing .mn-wb-highlight {visibility:hidden;}
+.mn-wb-review-footer {position:sticky;bottom:-20px;background:var(--paper);border-top:1px solid var(--line);padding:12px 0;display:flex;align-items:center;justify-content:space-between;gap:10px;}
+.mn-wb-review-footer .mn-primary {margin:0;}
+.mn-wb-review-footer button {font-size:12px;white-space:nowrap;}
+@media(max-width:560px){
+    .mn-workbench {border-radius:14px;inset:var(--top) 5px var(--bottom);}
+    .mn-workbench>.mn-row {padding:12px 14px 9px;}
+    .mn-wb-title h2 {font-size:20px;}
+    .mn-wb-actions {padding:0 12px 9px;}
+    .mn-wb-config {padding:8px 12px;gap:7px;}
+    .mn-wb-config select {font-size:11px;}
+    .mn-wb-body {padding:14px 12px;}
+    .mn-wb-composer {margin:0 8px 8px;padding:8px 10px;}
+    .mn-wb-review-footer {display:grid;}
+    .mn-wb-review-footer>.mn-row {justify-content:flex-end;}
+    .mn-wb-properties {gap:8px;}
+    .mn-wb-dialog>.mn-row {padding:12px;}
+    .mn-wb-dialog .mn-dialog-body {padding:12px;}
+    .mn-wb-review-footer {bottom:-12px;}
+}

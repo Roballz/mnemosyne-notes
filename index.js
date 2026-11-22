@@ -46,9 +46,28 @@ export function activate() {
     apply();
     const version=new NotebookVersion();
     const view=new View(root,prefs,apply,bind,version);
+    let workbench=null,workbenchLoading=null,reminderTimer;
+    const openWorkbench=view.guard(async()=>{
+        view.close();
+        workbenchLoading??=import('./lib/workbench/view.js').catch(error=>{workbenchLoading=null;throw error;});
+        const module=await workbenchLoading;
+        workbench??=module.createWorkbench(root,{notice:message=>view.toast(message,openWorkbench,true)});
+        await workbench.open();
+    });
+    view.openWorkbench=openWorkbench;
+    function remindArchive(){
+        clearTimeout(reminderTimer);
+        reminderTimer=setTimeout(view.guard(async()=>{
+            const key=chatKey(),e=engine;if(!key||!e||e.key!==key)return;
+            const {archiveReminder}=await import('./lib/workbench/reminders.js');
+            const reminder=await archiveReminder(key,e.host.size()-1);
+            if(reminder&&chatKey()===key)view.toast('已归档 '+reminder.archived+' / '+reminder.lastFloor+' 楼，点击打开工作台整理。',openWorkbench,true);
+            if(workbench?.controller.scope?.chatKey===key){workbench.controller.lastFloor=e.host.size()-1;workbench.renderProgress();}
+        }),250);
+    }
     root.append(head);
     surfaceState.bookmark=view.guard(floor=>view.bookmark(floor));
-    head.title='点按收藏 · 向内滑动打开记事簿 · 长按拖动停靠';
+    head.title='点按收藏 · 向内滑动打开记事簿 · 下滑打开工作台 · 长按拖动停靠';
     head.setAttribute('aria-label',head.title);
     const onBookmark=view.guard(()=>view.bookmark(centeredFloor()));
     let gesture=null,suppress=false;
@@ -59,6 +78,7 @@ export function activate() {
         view.panel.style.transform='';
         if(cancel){suppress=true;return;}
         if(g.drag){apply({side:ev.clientX<innerWidth/2?'left':'right',position:Math.max(.12,Math.min(.88,ev.clientY/innerHeight))});suppress=true;}
+        else if(g.down){if(g.travel>=36)openWorkbench();suppress=true;}
         else if(g.pull){if(g.travel>=36)view.open();suppress=true;}
         else if(Math.hypot(ev.clientX-g.x,ev.clientY-g.y)>10)suppress=true;
     }
@@ -66,7 +86,7 @@ export function activate() {
         if(!ev.isPrimary||ev.button!==0)return;
         suppress=false;
         const g={id:ev.pointerId,x:ev.clientX,y:ev.clientY,travel:0};gesture=g;
-        g.hold=setTimeout(()=>{if(gesture===g&&!g.pull){g.drag=true;root.classList.add('mn-dragging');}},350);
+        g.hold=setTimeout(()=>{if(gesture===g&&!g.pull&&!g.down){g.drag=true;root.classList.add('mn-dragging');}},350);
         head.setPointerCapture(ev.pointerId);
     };
     head.onpointermove=ev=>{
@@ -74,6 +94,8 @@ export function activate() {
         const dx=ev.clientX-g.x,dy=ev.clientY-g.y,d=prefs.side==='left'?dx:-dx;
         if(g.drag){head.style.transform='translate('+dx+'px,calc(-50% + '+dy+'px))';return;}
         if(Math.abs(dx)+Math.abs(dy)>8)clearTimeout(g.hold);
+        if(!g.pull&&!g.down&&dy>10&&dy>Math.abs(dx)*1.35)g.down=true;
+        if(g.down){g.travel=Math.max(0,dy);head.style.transform='translateY(calc(-50% + '+Math.min(60,g.travel)*.45+'px))';return;}
         if(d>8 && Math.abs(dx)>Math.abs(dy) && !g.pull){
             g.pull=true;g.width=view.panel.getBoundingClientRect().width;root.classList.add('mn-pulling');
             // Mount the visible directory during the gesture. Full backfill begins on release.
@@ -86,7 +108,7 @@ export function activate() {
         if(pull&&dist<36)view.close();};
     head.onpointercancel=ev=>{const pull=gesture?.pull;end(ev,true);if(pull)view.close();};
     head.onclick=ev=>{if(suppress&&ev.detail){suppress=false;return;}onBookmark();};
-    head.onkeydown=ev=>{if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();view.open();}};
+    head.onkeydown=ev=>{if(ev.key==='ArrowDown'){ev.preventDefault();openWorkbench();}else if(ev.key==='ArrowLeft'||ev.key==='ArrowRight'){ev.preventDefault();view.open();}};
     document.addEventListener('keydown',ev=>{if(ev.key==='Escape'&&view.opened&&!view.modal)view.close();});
 
     const surface=globalThis.__TAURITAVERN__?.api?.chatSurface;
@@ -124,7 +146,7 @@ export function activate() {
         binding=e.init().then(()=>{
             if(engine!==e)return;
             if(!e.alive()){e.dispose();engine=null;return;}
-            view.setEngine(e);if(view.opened)e.open();e.kick();return e;}).catch(err=>{
+            view.setEngine(e);if(view.opened)e.open();e.kick();remindArchive();return e;}).catch(err=>{
             if(engine===e){e.dispose();engine=null;throw err;}
         });
         return binding;
@@ -132,13 +154,16 @@ export function activate() {
     const ctx=context(), events=ctx.eventSource, types=ctx.eventTypes||ctx.event_types;
     const on=(key,fn)=>{if(types?.[key])events.on(types[key],(...args)=>{view.guard(fn)(...args);});};
     on('MORE_MESSAGES_LOADED',()=>{if(view.engine?.host.offset)view.floorSettings.schedule();});
-    on('CHAT_CHANGED',bind);on('APP_READY',bind);
+    on('CHAT_CHANGED',()=>{workbench?.close();return bind();});on('APP_READY',bind);
     for(const type of ['MESSAGE_RECEIVED','MESSAGE_SENT','MESSAGE_EDITED','MESSAGE_UPDATED','MESSAGE_SWIPED','GENERATION_ENDED']){
         on(type,async id=>{
             const key=chatKey();await bind();const e=engine;if(!e||e.key!==key)return;
             if(type!=='GENERATION_ENDED')view.floorSettings.schedule();
             const floor=type==='GENERATION_ENDED' || !Number.isInteger(id) ? context().chat.length-1:id;
             if(floor>=0)e.dirty(e.host.offset+floor,true);
+            if(['MESSAGE_EDITED','MESSAGE_SWIPED'].includes(type)&&workbench?.controller.scope?.chatKey===key)
+                workbench.controller.invalidateSource(e.host.offset+floor,type);
+            if(['MESSAGE_RECEIVED','MESSAGE_SENT','GENERATION_ENDED'].includes(type))remindArchive();
         });
     }
     on('MESSAGE_DELETED',async()=>{
@@ -146,6 +171,7 @@ export function activate() {
         view.floorSettings.schedule();
         const prior=e.host.tail;
         const count=await e.host.sync();if(!e.alive())return;
+        if(workbench?.controller.scope?.chatKey===key&&count<=workbench.controller.job?.lastFloor)workbench.controller.invalidateSource(0,'deleted');
         const last=context().chat.at(-1);
         const onlyTail=prior && count<prior.total && last && prior.messages.get(count-1)===last;
         await e.reset(onlyTail?count:0,true);
