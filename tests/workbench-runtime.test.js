@@ -151,19 +151,24 @@ test('wrong chat and incomplete raw range fail closed; independent context never
     assert.equal(h.seen.assemblies.length, 1);
 });
 
-test('native background profile registers once and grants no chat commit or arbitrary workspace tools', async t => {
+test('native workbench profile supports direct background runs with draft-only tools and no delegation', async t => {
     const h = setup(t);
     const id = await prepareNativeProfile(h.agent, [tool], 'duties');
     assert.equal(await prepareNativeProfile(h.agent, [tool], 'changed duties'), id);
     assert.equal(h.seen.registrations.length, 1);
+    assert.equal(h.seen.profiles.length, 1);
     assert.deepEqual(h.seen.registrations[0].contexts, ['chat']);
     const profile = h.seen.profiles[0];
     assert.equal(profile.run.presentation, 'background');
-    assert.equal(profile.run.directRunnable, false);
+    assert.equal(profile.run.directRunnable, true);
     assert.deepEqual(profile.tools.allow, ['extension/mnemosyne-notes:stage_changes', 'builtin:workspace.write_file', 'builtin:workspace.finish']);
     assert.ok(profile.tools.deny.includes('builtin:workspace.commit'));
     assert.deepEqual(profile.workspace.writableRoots, ['output']);
     assert.equal(profile.delegation.canDelegate, false);
+    assert.equal(profile.delegation.canHandoff, false);
+    assert.equal(profile.delegation.callable, false);
+    assert.equal(profile.delegation.allowAsSubagent, false);
+    assert.equal(profile.delegation.allowAsHandoffTarget, false);
 });
 
 test('native runs expose identity, deduplicate callbacks, and unsubscribe on authoritative completion', async t => {
