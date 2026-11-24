@@ -72,6 +72,16 @@ test('hiding the workbench does not stop a background run or touch story UI',asy
     assert.equal(document.querySelector('.mn-notebook').dataset.workbench,'no');
     assert.equal(c.stopped,undefined);assert.equal(c.running,true);
 });
+test('a retained TT timeout opens its log on demand without retrying the request',async()=>{
+    const {view,c,click}=setup(),reads=[];
+    Object.assign(c.job,{status:'interrupted',error:'工作台请求超时',nativeRunId:'prior-run',config:{sourceId:'main'}});
+    view.showRunLog=async id=>{reads.push(id);};
+    await view.open();assert.deepEqual(reads,[]);
+    click(view.body,'查看上次 TT 运行记录');await until(()=>reads.length);
+    assert.deepEqual(reads,['prior-run']);
+    c.job.config.sourceId='independent';view.render();
+    assert.doesNotMatch(view.body.textContent,/查看上次 TT 运行记录/);view.close();
+});
 test('streaming updates reuse the live text node instead of rebuilding history',async()=>{
     const {view,c}=setup();c.running=true;c.job.messages=[{role:'user',content:'合成任务'}];c.liveText='前缀';
     await view.open();const message=view.body.querySelector('.mn-wb-message'),live=view.live;

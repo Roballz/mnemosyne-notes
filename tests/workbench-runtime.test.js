@@ -2,7 +2,7 @@ import test from 'node:test';
 import { WorkbenchController } from '../lib/workbench/controller.js';
 import assert from 'node:assert/strict';
 import { captureWorkbenchContext, assembleWorkbenchPrompt, runtimeCapture, targetMaterial } from '../lib/workbench/context.js';
-import { runWorkbench, cancelWorkbenchRun } from '../lib/workbench/llm.js';
+import { runWorkbench, cancelWorkbenchRun, readWorkbenchRunLog } from '../lib/workbench/llm.js';
 import { listPresets, promptSettings, normalizeGenerationSettings, prepareNativeProfile, snapshotText } from '../lib/workbench/tt.js';
 import { settingsWithDefaults } from '../lib/workbench/model.js';
 
@@ -87,6 +87,44 @@ function setup(t, options = {}) {
     return { runtime, seen, chat, ctx, scope, settings, named, capture, agent };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('native deep thinking, tool progress and output get a fresh idle window; a silent run stops once', async t => {
+    t.mock.timers.enable({ apis: ['Date','setTimeout'] });
+    t.mock.method(performance, 'now', () => Date.now());
+    const h = setup(t), capture = await h.capture({ generationSettings: {} });
+    const pending = runWorkbench(capture, { messages: task, tools: [tool] });
+    const rejected = assert.rejects(pending, e => e.code === 'timeout' && /600 秒.*已收到模型正文/.test(e.message));
+    await tick();
+    const live = h.seen.live.get('run-1');
+    t.mock.timers.tick(300_000); // No output for five minutes before the first reasoning delta.
+    live({ type:'responseAppend', invocationId:'root', reasoning:'private chain' });
+    t.mock.timers.tick(450_000);
+    h.seen.subscribers.get('run-1')({type:'tool_call_completed',payload:{name:'plan_archive'}});
+    t.mock.timers.tick(450_000);
+    live({type:'responseAppend',invocationId:'root',text:'正在归档'});
+    t.mock.timers.tick(599_999);
+    live({type:'responseAppend',invocationId:'root',text:''});
+    assert.deepEqual(h.seen.cancelled,[]);
+    t.mock.timers.tick(1);await rejected;
+    assert.deepEqual(h.seen.cancelled,['run-1']);
+    assert.equal(h.seen.subscribers.size,0);assert.equal(h.seen.live.size,0);
+});
+
+test('old native timeout can read its recent stages without retrying or showing raw payloads', async t => {
+    const h = setup(t);
+    h.agent.readEvents=async input=>{
+        assert.deepEqual(input,{runId:'old-run',beforeSeq:Number.MAX_SAFE_INTEGER,limit:40});
+        return {events:[
+            {seq:16,type:'model_call_attempt_started',payload:{round:2,attempt:1}},
+            {seq:17,type:'model_call_attempt_failed',payload:{message:'HTTP 429 with private credentials'}},
+            {seq:18,type:'run_cancelled',payload:{message:'private cancellation details'}},
+        ]};
+    };
+    const log=await readWorkbenchRunLog('old-run',h.runtime);
+    assert.match(log.join('\n'),/第2轮.*第1次尝试/);assert.match(log[1],/模型调用失败.*HTTP 429/);
+    assert.match(log[2],/已取消/);assert.doesNotMatch(log.join('\n'),/private/);
+    assert.deepEqual(h.seen.starts,[]);
+});
 
 test('mid-chat archive preview reads only the inclusive range from a windowed chat', async t => {
     const h = setup(t);

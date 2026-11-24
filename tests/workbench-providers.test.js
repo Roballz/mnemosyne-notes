@@ -129,8 +129,23 @@ test('超时覆盖已返回响应头后的停滞读取，并主动取消 reader'
         signal = options.signal;
         return new Response(new ReadableStream({ cancel() { cancelled = true; } }), { headers: { 'content-type': 'text/event-stream' } });
     };
-    await assert.rejects(requestChannel(channel({ stream: true, timeoutSec: 0.025 }), messages), error => error.code === 'TIMEOUT');
+    await assert.rejects(requestChannel(channel({ stream: true, timeoutSec: 0.025 }), messages), error => error.code === 'TIMEOUT' && /独立 API 第1轮.*等待模型流式输出/.test(error.message));
     assert.equal(signal.aborted, true); assert.equal(cancelled, true);
+});
+
+test('SSE reasoning and tool arguments extend the idle timeout while heartbeats do not', async t => {
+    host();
+    t.mock.timers.enable({apis:['Date','setTimeout']});t.mock.method(performance,'now',()=>Date.now());
+    let output;
+    globalThis.fetch=async()=>new Response(new ReadableStream({start(c){output=c;}}),{headers:{'content-type':'text/event-stream'}});
+    const pending=requestChannel(channel({stream:true,timeoutSec:600}),messages,{round:2});
+    const rejected=assert.rejects(pending,e=>e.code==='TIMEOUT'&&/第2轮.*600 秒.*工具调用分片/.test(e.message));
+    const write=async raw=>{output.enqueue(new TextEncoder().encode(raw));await new Promise(r=>setImmediate(r));};
+    await new Promise(r=>setImmediate(r));
+    t.mock.timers.tick(300_000);await write(event(delta({reasoning_content:'只参与计时'})));
+    t.mock.timers.tick(500_000);await write(event(delta({tool_calls:[{index:0,id:'tool',function:{name:'edit',arguments:'{'}}]})));
+    t.mock.timers.tick(599_999);await write(': ping\n\n');
+    t.mock.timers.tick(1);await rejected;
 });
 
 test('停止工作台请求只取消自己的 signal，另一请求可完整结束', async () => {

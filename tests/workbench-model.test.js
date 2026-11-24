@@ -10,6 +10,15 @@ test('independent API settings do not inherit memory or story generation setting
     assert.throws(()=>validateSettings({...settings,generation:{...settings.generation,maxTokens:2000,contextSize:1000}}));
     assert.throws(()=>validateSettings({...settings,channels:[{id:'x',name:'x',url:'javascript:alert(1)',model:'x'}]}));
 });
+test('workbench timeout defaults and legacy 180 seconds upgrade once, retaining custom settings',()=>{
+    assert.equal(settingsWithDefaults().generation.timeoutSec,600);
+    const legacy={schemaVersion:1,generation:{timeoutSec:180}};
+    const upgraded=settingsWithDefaults(legacy);
+    assert.equal(upgraded.generation.timeoutSec,600);assert.equal(legacy.generation.timeoutSec,180);
+    assert.equal(settingsWithDefaults({generation:{timeoutSec:900}}).generation.timeoutSec,900);
+    upgraded.generation.timeoutSec=180;
+    assert.equal(settingsWithDefaults(validateSettings(upgraded)).generation.timeoutSec,180);
+});
 test('blue/User/Char default selection is explicit and preserves manual exclusions',()=>{
     const targets=[{id:'u',kind:'user',selected:true},{id:'c',kind:'char',selected:true},{id:'b',kind:'world',selected:true},{id:'g',kind:'world',selected:false}];
     assert.deepEqual([...selectedIds(targets)],['u','c','b']);
