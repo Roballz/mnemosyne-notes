@@ -27,6 +27,76 @@ function setup(){
     return {c,api,settings,jobs,saved};
 }
 const plan={batches:[{title:'第一批',instructions:'整理第一项'},{title:'第二批',instructions:'整理第二项'}]};
+test('manual archive onboarding retries an existing gap in place and never requests the old history',async()=>{
+    const {c,jobs,settings,saved}=setup();
+    let historyCalls=0;
+    const captures=[],requests=[];
+    c.api.captureHistory=async()=>{
+        historyCalls++;
+        return {available:true,coverage:{complete:false},warnings:['1034 个正文楼层未覆盖']};
+    };
+    c.api.captureWorkbenchContext=async options=>{
+        captures.push(options);
+        return {rawMessages:[{floor:options.firstFloor,role:'assistant',content:'衔接楼'}]};
+    };
+    c.api.runWorkbench=async(_,options)=>{
+        requests.push(options.messages);
+        await options.onTool('plan_archive',{batches:[plan.batches[0]]});
+        return {text:'第一批计划'};
+    };
+    await c.send('整理新的 rolling');
+    const failed=c.job;
+    assert.equal(failed.status,'interrupted');assert.match(failed.error,/1034/);
+    assert.equal(requests.length,0);
+    // A job stored by the previous release has no manualArchive field.
+    delete jobs.get(failed.id).manualArchive;
+    await c.resume(failed.id);
+    c.lastFloor=270;
+    await c.setArchivedFloor(105,true);
+    assert.equal(c.job.lastFloor,250);
+    c.targets.push({id:'world:w:2',kind:'world',world:'合成世界',uid:2,title:'手动归档',content:'已有前情',metadata:{}});
+    await c.select(['world:w:1','world:w:2']);
+    await c.resume(failed.id);
+    await c.send('',{retry:true});
+    assert.equal(c.job.id,failed.id);assert.equal(c.job.status,'planned');
+    assert.deepEqual(captures.map(x=>[x.firstFloor,x.lastFloor,x.historyBlock]),[[105,250,'']]);
+    assert.deepEqual(captures[0].selectedTargets.map(t=>t.id),['world:w:1','world:w:2']);
+    assert.deepEqual(requests[0][0],{role:'user',content:'整理新的 rolling'});
+    assert.match(requests[0].at(-1).content,/以所选设定衔接前情/);
+    assert.equal(historyCalls,1);assert.equal(saved.length,0);
+    c.api.runWorkbench=async(_,options)=>{
+        await options.onTool('propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'新归档'}]});
+        return {text:'请审核本批'};
+    };
+    await c.send('',{execute:true});
+    assert.equal(c.job.status,'review');
+    assert.equal(saved.length,0);
+    await c.saveReviewed(c.currentBatch().items);
+    assert.equal(settings.get(scope.chatKey).archivedFloor,250);
+    c.api.latestFloor=async()=>270;
+    await c.newJob();await c.preview();
+    assert.deepEqual(captures.map(x=>[x.firstFloor,x.lastFloor]),[[105,250],[105,250],[250,270]]);
+    assert.equal(historyCalls,1);
+    await c.setArchivedFloor(250,false);
+    await assert.rejects(()=>c.preview(),/缺口/);
+    assert.equal(historyCalls,2);
+});
+
+test('manual archive source stays scoped to one chat and to archive mode',async()=>{
+    const {c,settings}=setup();let historyCalls=0;
+    c.api.captureHistory=async()=>{historyCalls++;return {available:true,text:'之前的历史总结',coverage:{complete:false}};};
+    c.api.captureWorkbenchContext=async options=>({...options,rawMessages:[]});
+    await c.setArchivedFloor(100,true);
+    assert.deepEqual([...settings.keys()],[scope.chatKey]);
+    assert.deepEqual(await c.api.storage.getSettings({chatKey:'another-chat'}),{});
+    await c.saveState({mode:'free'});
+    const free=await c.preview();assert.equal(free.historyBlock,'之前的历史总结');assert.equal(historyCalls,1);
+    await c.saveState({mode:'archive'});
+    const manual=await c.preview();assert.equal(manual.historyBlock,'');assert.equal(historyCalls,1);
+    c.api.captureWorkbenchContext=async()=>{throw Error('正文楼层未完整返回');};
+    await assert.rejects(()=>c.preview(),/正文楼层未完整返回/);
+});
+
 test('plan and tool proposals only stage durable drafts, not writes',async()=>{
     const {c,saved,jobs}=setup();const job=await c.newJob();
     await assert.rejects(()=>c.onTool(job,'plan','propose_changes',{operations:[]}));

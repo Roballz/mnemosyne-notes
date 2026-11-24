@@ -51,6 +51,22 @@ test('closing review retains the draft without any host write',async()=>{
     await until(()=>drafts.length>0);
     assert.equal(drafts.at(-1).value[0].after.content,'尚未确认的改稿');assert.equal(writes.length,0);
 });
+test('archive floor dialog reuses the current floor and can toggle manual onboarding',async()=>{
+    const {view,c,document,click}=setup();c.job=null;
+    const values=[];
+    c.setArchivedFloor=async(floor,manualArchive)=>{values.push([floor,manualArchive]);Object.assign(c.state,{archivedFloor:floor,manualArchive});};
+    await view.open();
+    for(const enabled of [true,false]){
+        click(view.progress,'100');
+        const dialog=await until(()=>document.querySelector('dialog'));
+        const toggle=dialog.querySelector('input[type="checkbox"]');
+        assert.match(dialog.textContent,/从手动归档处接续/);
+        assert.equal(toggle.checked,!enabled);
+        toggle.checked=enabled;click(dialog,'确认');
+        await until(()=>!document.querySelector('dialog'));
+    }
+    assert.deepEqual(values,[[100,true],[100,false]]);view.close();
+});
 test('hiding the workbench does not stop a background run or touch story UI',async()=>{
     const {view,c,document}=setup();await view.open();c.running=true;view.close();
     assert.equal(document.querySelector('.mn-notebook').dataset.workbench,'no');

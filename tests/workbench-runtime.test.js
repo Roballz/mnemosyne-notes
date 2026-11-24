@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { captureWorkbenchContext, assembleWorkbenchPrompt, runtimeCapture, targetMaterial } from '../lib/workbench/context.js';
 import { runWorkbench, cancelWorkbenchRun } from '../lib/workbench/llm.js';
 import { listPresets, promptSettings, normalizeGenerationSettings, prepareNativeProfile, snapshotText } from '../lib/workbench/tt.js';
+import { settingsWithDefaults } from '../lib/workbench/model.js';
 
 const copy = value => structuredClone(value);
 const tool = { name: 'stage_changes', description: 'Save complete drafts', parameters: { type: 'object', properties: { edits: { type: 'array' } }, required: ['edits'] } };
@@ -86,6 +87,33 @@ function setup(t, options = {}) {
     return { runtime, seen, chat, ctx, scope, settings, named, capture, agent };
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
+
+test('mid-chat archive preview reads only the inclusive range from a windowed chat', async t => {
+    const h = setup(t);
+    const reads = [];
+    const reader = { offset: 1034, sync: async () => 1036, read: async (first, end) => {
+        reads.push([first, end]);
+        assert.deepEqual([first, end], [1034, 1036]);
+        return h.chat;
+    } };
+    const c = new WorkbenchController({
+        targets: { captureScope: async () => h.scope, listTargets: async () => ({ targets, worlds: [] }) },
+        captureHistory: () => assert.fail('manually archived prefix must not be scanned'),
+        getDefaultPreset: () => '',
+        captureWorkbenchContext: options => captureWorkbenchContext({ ...options, runtime: h.runtime, reader }),
+    });
+    c.settings = settingsWithDefaults();
+    c.job = { mode: 'archive', manualArchive: true, scope: h.scope, firstFloor: 1034, lastFloor: 1035,
+        selectedTargetIds: targets.map(t => t.id), batches: [] };
+    const capture = await c.preview();
+    const prompt = snapshotText((await assembleWorkbenchPrompt(capture, task)).promptSnapshot);
+    assert.deepEqual(reads, [[1034, 1036]]);
+    assert.deepEqual(capture.rawMessages.map(message => message.floor), [1034, 1035]);
+    assert.match(prompt, /<workbench_floor index="1034">/);
+    assert.match(prompt, /<workbench_floor index="1035">/);
+    assert.ok(prompt.includes(targetMaterial(targets.at(-1))));
+    assert.doesNotMatch(prompt, /<workbench_history/);
+});
 
 test('capture preserves hidden raw body and rolling, freezes its range, and carries labelled selected materials only', async t => {
     const h = setup(t), capture = await h.capture();
