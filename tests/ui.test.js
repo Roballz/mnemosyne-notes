@@ -6,6 +6,7 @@ import 'fake-indexeddb/auto';
 import * as db from '../lib/db.js';
 import { reader } from '../lib/dom.js';
 
+test.beforeEach(t=>{t.mock.method(globalThis,'fetch',async()=>Response.json({version:'0.0.0'}));});
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn) {
     for(let i=0;i<180;i++){const result=await fn();if(result)return result;await delay(10);}
@@ -341,7 +342,7 @@ test('扩展折叠项记住悬浮按钮开关，两个版本入口共享检测�
     globalThis.fetch=async(url,options)=>{
         calls.push([url,options]);
         if(url.endsWith('/discover'))return Response.json([{name:'third-party/mnemosyne-notes',type:'global'}]);
-        if(url.endsWith('/version'))return new Promise(r=>{finishCheck=()=>r(Response.json({isUpToDate:false}));});
+        if(url.includes('/main/manifest.json?t='))return new Promise(r=>{finishCheck=()=>r(Response.json({version:'9.0.0'}));});
         assert.equal(url,'/api/extensions/update');
         if(++attempt===1)return new Response('网络中断',{status:502});
         return new Promise(r=>{finishUpdate=()=>r(Response.json({isUpToDate:false}));});
@@ -354,7 +355,7 @@ test('扩展折叠项记住悬浮按钮开关，两个版本入口共享检测�
     const content=native.querySelector(':scope > .inline-drawer-content');
     const arrow=header.querySelector('.inline-drawer-icon.down');
     assert.ok(arrow && content.contains(drawer.querySelector('input')));
-    assert.ok(!drawer.querySelector('details,summary'));assert.equal(calls.length,0);
+    assert.ok(!drawer.querySelector('details,summary'));assert.equal(calls.length,1);
     assert.equal(d.querySelector('#mn-open-settings'),null);
     const toggle=drawer.querySelector('input'),head=d.querySelector('.mn-head');
     assert.equal(toggle.checked,true);toggle.checked=false;toggle.onchange();
@@ -366,35 +367,35 @@ test('扩展折叠项记住悬浮按钮开关，两个版本入口共享检测�
     const panelRow=d.querySelector('.mn-page .mn-row');
     const {version}=JSON.parse(await (await import('node:fs/promises')).readFile(new URL('../manifest.json',import.meta.url),'utf8'));
     assert.equal(panelRow.firstElementChild.textContent,'记事簿设置');
-    assert.equal(panelRow.querySelector('.mn-version span').textContent,'v'+version);
+    assert.equal(panelRow.querySelector('.mn-version-current').textContent,'v'+version);
     const buttons=[drawer,panelRow].map(el=>el.querySelector('.mn-version-action'));
     assert.ok(buttons.every(b=>b.hidden));finishCheck();
     await until(()=>buttons.every(b=>!b.hidden));
-    assert.equal(calls.length,2);
+    assert.equal(calls.length,1);assert.equal(d.querySelector('[data-tab=settings]').dataset.update,'true');
     buttons[0].click();await until(()=>buttons[1].textContent==='重试更新');
     buttons[1].click();await until(()=>finishUpdate);assert.ok(buttons.every(b=>b.disabled));
     buttons[0].click();finishUpdate();
     await until(()=>buttons.every(b=>b.textContent==='重载生效'));
     assert.equal(calls.length,4);
-    for(const [,options] of calls.slice(1))assert.deepEqual(JSON.parse(options.body),{extensionName:'mnemosyne-notes',global:true});
+    for(const [,options] of calls.slice(2))assert.deepEqual(JSON.parse(options.body),{extensionName:'mnemosyne-notes',global:true});
 });
 
-test('已是最新版只显示版本号，重复打开设置复用检测结果',async t=>{
-    const {ctx}=setup();
-    ctx.getRequestHeaders=()=>({'Content-Type':'application/json'});
-    const savedFetch=globalThis.fetch,calls=[];
-    t.after(()=>{globalThis.fetch=savedFetch;});
-    globalThis.fetch=async(url,options)=>{
-        calls.push(url);
-        if(url.endsWith('/discover'))return Response.json([{name:'third-party/mnemosyne-notes',type:'local'}]);
-        assert.equal(JSON.parse(options.body).global,false);
-        return Response.json({isUpToDate:true});
-    };
-    const {NotebookVersion}=await import('../lib/extension-settings.js');
-    const version=new NotebookVersion(),row=version.row('notebook');
-    await Promise.all([version.check(),version.check()]);
-    await version.check();
-    assert.equal(calls.length,2);
-    assert.ok(row.querySelector('button').hidden);
-    assert.ok(version.row('extension').querySelector('button').hidden);
+test('设置重新打开可立即发现远端发布，失败保留上次结果，检查合并并发',async t=>{
+    setup();
+    const {NotebookVersion,VERSION}=await import('../lib/extension-settings.js');
+    const version=new NotebookVersion(),row=version.row('notebook'),calls=[];
+    let latest=VERSION;
+    t.mock.method(globalThis,'fetch',async(url,options)=>{
+        calls.push(url);assert.equal(options.cache,'no-store');
+        assert.match(url,/Roballz\/mnemosyne-notes\/main\/manifest\.json\?t=\d+/);
+        if(!latest)throw Error('offline');
+        return Response.json({version:latest});
+    });
+    const update=row.querySelector('.mn-version-action');
+    await Promise.all([version.check(),version.check(true)]);await version.check();
+    assert.equal(calls.length,1);assert.equal(update.hidden,true);
+    latest='0.20.0';await version.check(true);assert.equal(update.textContent,'更新到 v0.20.0');assert.equal(update.hidden,false);
+    latest='';await Promise.all([version.check(true),version.check(true)]);assert.equal(update.hidden,false);
+    latest='0.1.0';row.querySelector('.mn-version-current').click();await until(()=>update.hidden);
+    assert.equal(calls.length,4);
 });

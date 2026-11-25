@@ -46,6 +46,7 @@ export function activate() {
     apply();
     const version=new NotebookVersion();
     const view=new View(root,prefs,apply,bind,version);
+    void version.check();
     let workbench=null,workbenchLoading=null,reminderTimer;
     const openWorkbench=view.guard(async()=>{
         view.close();

@@ -5,6 +5,7 @@ import { settingsWithDefaults } from '../lib/workbench/model.js';
 import { prepareOperations } from '../lib/workbench/targets.js';
 import { runFailure } from '../lib/workbench/failures.js';
 
+const prepareWithHostTemplate=(operations,options)=>prepareOperations(operations,{...options,adapter:{worldEntryTemplate:{role:null,depth:4,order:100}}});
 const scope={chatKey:'synthetic-chat',worldNames:['合成世界']};
 const state=(content)=>({content,metadata:{}});
 function setup(){
@@ -251,7 +252,7 @@ test('invalid draft ranges are rejected before changing persisted settings or ta
 });
 
 async function preparedArchive(){
-    const env=setup();env.api.targets.prepareOperations=prepareOperations;env.c.captureCatalogTargets=env.c.targets;
+    const env=setup();env.api.targets.prepareOperations=prepareWithHostTemplate;env.c.captureCatalogTargets=env.c.targets;
     const job=await env.c.newJob();await env.c.onTool(job,'plan','plan_archive',{batches:[plan.batches[0]]});
     return {...env,job};
 }
@@ -343,7 +344,7 @@ test('failed proposals retain drafts and diagnostic history across reload, discu
 
 test('review preparation recovers journal locks and applied creations despite an older skipped draft',async()=>{
     const {c,api,settings,jobs,saved}=setup(),journalReads=[];
-    api.targets.prepareOperations=prepareOperations;c.captureCatalogTargets=c.targets;
+    api.targets.prepareOperations=prepareWithHostTemplate;c.captureCatalogTargets=c.targets;
     const job=await c.newJob();await c.onTool(job,'plan','plan_archive',plan);
     await c.onTool(job,'edit','propose_changes',{operations:[
         createFormal('## S-151 合成已写入条目\n事实甲'),createFormal('## S-152 合成待确认条目\n事实乙'),

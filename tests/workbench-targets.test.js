@@ -65,9 +65,22 @@ test('one grouped save preserves unrelated in-flight edits and isolates changed 
 });
 test('closed deletion and multiple creates retain imported bookkeeping and distinct UIDs',async()=>{
  const {fixture:f,targets}=await setup();
- const items=await prepareOperations([{action:'delete',target:targets.find(t=>t.kind==='world'&&t.uid===0).id},{action:'create',target:{kind:'world',world:'合成书'},content:'新增甲',metadata:{comment:'新增甲',key:['新'],light:'blue'}},{action:'create',target:{kind:'world',world:'合成书'},content:'新增乙',metadata:{comment:'新增乙'}}],{scope,targets});
+ const items=await prepareOperations([{action:'delete',target:targets.find(t=>t.kind==='world'&&t.uid===0).id},{action:'create',target:{kind:'world',world:'合成书'},content:'新增甲',metadata:{comment:'新增甲',key:['新'],light:'blue'}},{action:'create',target:{kind:'world',world:'合成书'},content:'新增乙',metadata:{comment:'新增乙'}}],{scope,targets,adapter:f.adapter});
  const result=await applyReviewedItems(items,{scope,adapter:f.adapter});assert.ok(result.every(r=>r.status==='applied'));assert.equal(f.calls.saves,1);assert.equal(f.book.entries[0],undefined);
  assert.equal(Object.values(f.book.entries).filter(e=>e.content.startsWith('新增')).length,2);assert.equal(new Set(result.map(r=>r.target.uid)).size,3);assert.equal(f.book.custom,'保留整书属性');assert.equal(f.book.originalData.entries.some(e=>e.uid===0),false);
+});
+test('new entries inherit the native template and enable both recursion guards by default',async()=>{
+ const f=fixture(),target={kind:'world',world:'合成书'};
+ const template={content:'',role:null,order:77,depth:null,selective:true,excludeRecursion:false,preventRecursion:false,hostSpecific:{tags:[]}};
+ f.adapter.worldEntryTemplate=template;
+ const items=await prepareOperations([{action:'create',target,content:'甲',metadata:{order:' ',depth:null}},{action:'create',target,metadata:{order:'33',excludeRecursion:false,position:0}}],{scope,adapter:f.adapter});
+ assert.equal(items[0].after.metadata.depth,null);
+ const result=await applyReviewedItems(items,{scope,adapter:f.adapter});assert.ok(result.every(r=>r.status==='applied'));
+ const [a,b]=result.map(r=>f.book.entries[r.target.uid]);
+ assert.deepEqual([a.excludeRecursion,a.preventRecursion,a.order,a.role,a.depth],[true,true,77,null,null]);
+ assert.deepEqual([b.excludeRecursion,b.preventRecursion,b.order],[false,true,33]);
+ assert.deepEqual(a.hostSpecific,{tags:[]});assert.equal(template.excludeRecursion,false);assert.equal(f.calls.saves,1);
+ await assert.rejects(()=>prepareOperations([{action:'create',target,metadata:{depth:'bad'}}],{scope,adapter:f.adapter}),/深度/);
 });
 test('several character fields use one merge, User delete only clears its description',async()=>{
  const {fixture:f,targets}=await setup(),char=targets.filter(t=>t.kind==='char');
