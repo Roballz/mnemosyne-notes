@@ -86,6 +86,24 @@ test('a retained TT timeout opens its log on demand without retrying the request
     c.job.config.sourceId='independent';view.render();
     assert.doesNotMatch(view.taskbar.textContent,/查看上次 TT 运行记录/);view.close();
 });
+
+test('tool and model failures render distinct persistent diagnostics and retry only after a manual click',async()=>{
+    const {view,c,click}=setup(),requests=[];
+    const failure={version:1,kind:'tool',toolName:'propose_changes',message:'补丁原文未唯一命中',errorCode:'extension.tool_error',resultPath:'tool-results/inv_root/round-001-call_test.json'};
+    Object.assign(c.job,{status:'interrupted',failure,error:'本批已停止',messages:[
+        {role:'assistant',kind:'failure',failure,incomplete:true,content:''},
+        {role:'assistant',kind:'failure',failure:{version:1,kind:'model',message:'HTTP 502 上游响应中断'},incomplete:true,content:''},
+    ]});
+    c.send=async(...args)=>{requests.push(args);};
+    await view.open();
+    assert.match(view.body.textContent,/工具执行失败.*补丁原文未唯一命中/s);
+    assert.match(view.body.textContent,/模型请求失败.*HTTP 502/s);
+    assert.ok([...view.body.querySelectorAll('details')].every(detail=>detail.open));
+    assert.match(view.taskbar.textContent,/审核已保留草案/);assert.deepEqual(requests,[]);
+    view.input.value='按补充要求重提';click(view.taskbar,'手动重新提交');
+    await until(()=>requests.length===1);assert.deepEqual(requests,[['按补充要求重提',{retry:true}]]);
+    c.job.error='';view.render();assert.match(view.body.textContent,/补丁原文未唯一命中/);view.close();
+});
 test('streaming updates reuse the live text node instead of rebuilding history',async()=>{
     const {view,c}=setup();c.running=true;c.job.messages=[{role:'user',content:'合成任务'}];c.liveText='前缀';
     await view.open();const message=view.body.querySelector('.mn-wb-message'),live=view.live;

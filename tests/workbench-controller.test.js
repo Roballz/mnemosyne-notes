@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { WorkbenchController } from '../lib/workbench/controller.js';
 import { settingsWithDefaults } from '../lib/workbench/model.js';
 import { prepareOperations } from '../lib/workbench/targets.js';
+import { runFailure } from '../lib/workbench/failures.js';
 
 const scope={chatKey:'synthetic-chat',worldNames:['合成世界']};
 const state=(content)=>({content,metadata:{}});
@@ -274,32 +275,70 @@ test('running, stale-list and stale-task review drafts cannot overwrite complete
     assert.equal(c.currentBatch().items[0].after.content,edit[0].after.content);
 });
 
-test('formal number conflicts reject the whole same-call or later-call proposal without dropping earlier work',async()=>{
+test('archive proposals accept more than 100 operations, repeated formal numbers, long sections and 了',async()=>{
     const {c,job,jobs}=await preparedArchive();
-    await assert.rejects(()=>c.onTool(job,'edit','propose_changes',{operations:[
-        createFormal('## P-131 合成甲\n事实甲'),createFormal('## P-131 合成乙\n事实乙'),
-    ]}),/P-131.*重复/);
-    assert.equal(c.currentBatch().items.length,0);assert.equal(jobs.get(job.id).batches[0].items.length,0);
-    await c.onTool(job,'edit','propose_changes',{operations:[createFormal('## P-131 合成甲\n事实甲')]});
+    c.targets[0].content='## P-131 现有同编号\n旧记录';
+    const content='## P-131 合成甲\n已经记录了事实。'+'甲'.repeat(801);
+    await c.onTool(job,'edit','propose_changes',{operations:Array.from({length:125},()=>createFormal(content))});
+    assert.equal(c.currentBatch().items.length,125);assert.equal(jobs.get(job.id).batches[0].items.length,125);
+    assert.ok(c.currentBatch().items.every(item=>item.after.content===content));
     const accepted=structuredClone(c.currentBatch().items);
-    await assert.rejects(()=>c.onTool(job,'edit','propose_changes',{operations:[createFormal('## P-131 合成乙\n事实乙')]}),/P-131.*重复/);
-    assert.deepEqual(c.currentBatch().items,accepted);assert.deepEqual(jobs.get(job.id).batches[0].items,accepted);
-    const container='## P-132 合成乙\n'+'乙'.repeat(440)+'\n\n## P-133 合成丙\n'+'丙'.repeat(440);
-    assert.ok(container.length>800);
-    await c.onTool(job,'edit','propose_changes',{operations:[createFormal(container)]});
-    assert.equal(c.currentBatch().items.length,2);
+    await c.onTool(job,'edit','propose_changes',{operations:[createFormal('## P-131 合成甲\n事实甲')]});
+    assert.equal(c.currentBatch().items.length,126);
+    assert.deepEqual(c.currentBatch().items.slice(0,125),accepted);
+    assert.deepEqual(jobs.get(job.id).batches[0].items,c.currentBatch().items);
 });
 
-test('manual review cannot introduce a duplicate formal number before any host write',async()=>{
+test('manual review can save duplicate formal numbers and unvalidated wording',async()=>{
     const {c,job,saved}=await preparedArchive();
     await c.onTool(job,'edit','propose_changes',{operations:[
         createFormal('## R-141 合成关系甲\n事实甲'),createFormal('## R-142 合成关系乙\n事实乙'),
     ]});
     const edits=structuredClone(c.currentBatch().items);
-    edits[1].after.content='## R-141 人工误改的重复关系\n事实乙';
-    await assert.rejects(()=>c.saveReviewed(edits),/R-141.*重复/);
-    assert.equal(saved.length,0);assert.equal(c.saving,false);
-    assert.match(c.currentBatch().items[1].after.content,/R-142/);
+    edits[1].after.content='## R-141 人工确认的同编号关系\n已经确认了。'+'乙'.repeat(801);
+    await c.saveReviewed(edits);
+    assert.equal(saved.length,1);assert.equal(c.saving,false);
+    assert.equal(saved[0].items[1].after.content,edits[1].after.content);
+});
+
+test('failed proposals retain drafts and diagnostic history across reload, discussion and manual retry',async()=>{
+    const {c,job,jobs,saved}=await preparedArchive();let requests=0;
+    c.captureFor=async()=>{c.captureTargets=c.targets;c.captureAllowed=new Set(c.targets.map(t=>t.id));return {};};
+    c.api.runWorkbench=async(_,options)=>{
+        requests++;
+        options.onText('已返回的正文','已返回的正文');
+        await options.onTool('propose_changes',{operations:[createFormal('## S-191 已完成草案\n事实甲')]});
+        throw runFailure(Error('补丁原文未唯一命中'),'tool',{toolName:'propose_changes',callId:'failed-call'});
+    };
+    await c.send('',{execute:true});
+    assert.equal(requests,1);assert.equal(job.status,'interrupted');assert.match(job.error,/工具执行失败.*propose_changes/);
+    assert.equal(job.batches[0].items.length,1);assert.equal(job.batches[0].status,'review');assert.equal(saved.length,0);
+    c.job=structuredClone(jobs.get(job.id));
+    const originalFailure=structuredClone(c.job.messages.find(m=>m.kind==='failure'));
+    assert.equal(originalFailure.failure.message,'补丁原文未唯一命中');
+    assert.ok(c.job.messages.some(m=>m.incomplete&&m.content==='已返回的正文'));
+    c.api.runWorkbench=async(_,options)=>{
+        requests++;assert.ok(!options.tools.some(t=>t.name==='propose_changes'));
+        return {text:'记下补充要求，等你重新提交。'};
+    };
+    await c.send('失败的条目先保留更多上下文');
+    assert.equal(requests,2);assert.equal(c.job.status,'interrupted');assert.equal(c.job.failure.phase,'edit');
+    const priorTarget=c.job.batches[0].items[0].target.id;
+    c.api.runWorkbench=async(_,options)=>{
+        requests++;assert.ok(options.tools.some(t=>t.name==='propose_changes'));
+        assert.match(options.messages.at(-1).content,/补丁原文未唯一命中/);
+        assert.ok(options.messages.at(-1).content.includes(priorTarget));
+        assert.match(options.messages.at(-1).content,/补充的重试要求/);
+        await options.onTool('propose_changes',{operations:[createFormal('## S-192 手动重试草案\n事实乙')]});
+        return {text:'请审核本批修改。'};
+    };
+    await c.send('补充的重试要求',{retry:true});
+    assert.equal(requests,3);assert.equal(c.job.status,'review');assert.equal(c.job.failure,undefined);
+    assert.equal(c.job.batches[0].items.length,2);assert.equal(saved.length,0);
+    assert.deepEqual(c.job.messages.find(m=>m.kind==='failure'),originalFailure);
+    assert.deepEqual(jobs.get(job.id).messages.find(m=>m.kind==='failure'),originalFailure);
+    c.job.failure=originalFailure.failure;c.job.batches[0].status='partial';
+    await assert.rejects(c.send('',{retry:true}),/先审核并保存/);
 });
 
 test('review preparation recovers journal locks and applied creations despite an older skipped draft',async()=>{

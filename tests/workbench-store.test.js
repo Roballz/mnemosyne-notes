@@ -14,6 +14,7 @@ function fixture(name='store-'+crypto.randomUUID()){
  return {scope,adapter,get live(){return live;},get durable(){return durable;},get writes(){return writes;},setLive:value=>{live=copy(value);},setDurable:value=>{durable=copy(value);},change:fn=>{fn(live);durable=copy(live);}};
 }
 async function proposal(f,operations){const {targets}=await listTargets(f.scope,{adapter:f.adapter});return prepareOperations(operations||[{action:'replace',target:targets[0].id,content:'新原文'}],{scope:f.scope,targets,adapter:f.adapter});}
+
 async function seed(rows){const db=await database(),tx=db.transaction(['meta','workbenchSnapshots'],'readwrite'),done=txDone(tx);for(const row of rows){tx.objectStore('workbenchSnapshots').put(row);tx.objectStore('meta').put({...row,before:{content:'存档原文',metadata:{}},after:null},['workbench.snapshot',row.id]);}await done;}
 async function seedIntent(f,batchId,item,status='prepared'){
  const id=JSON.stringify(['workbench',f.scope.chatKey,'',batchId,item.id]),row={id,itemId:item.id,batchId,scopeKey:f.scope.chatKey,scope:copy(f.scope),target:copy(item.target),before:copy(item.before),after:copy(item.after),status,createdAt:Date.now(),updatedAt:Date.now()};
@@ -106,4 +107,14 @@ test('bounded default 30-day retention removes full payloads, preserving uncerta
  await pruneSnapshots({now});assert.equal(await getSnapshot('ret-old'),undefined);assert.ok(await getSnapshot('ret-new'));assert.ok(await getSnapshot('ret-pending'));
  assert.equal(await meta(['workbench.snapshot','ret-old']),undefined);assert.deepEqual(await meta(['synthetic-note']),{text:'现有收藏保留'});
  const longer=await pruneSnapshots({now,days:60});assert.equal(longer.deleted,0);
+});
+
+test('more than 100 reviewed operations persist without a hidden cap or repeated host writes',async()=>{
+ const f=fixture(),content='## S-001 合成同编号\n已经完成了。'+'甲'.repeat(801);
+ const items=await proposal(f,Array.from({length:125},()=>({action:'create',target:{kind:'world',world:'合成书'},content})));
+ const result=await saveBatch({batchId:'large-batch',scope:f.scope,items,adapter:f.adapter});
+ assert.equal(result.complete,true);assert.equal(result.applied,125);assert.equal(f.writes,1);
+ assert.equal(Object.values(f.durable.entries).filter(entry=>entry.content===content).length,125);
+ const replay=await saveBatch({batchId:'large-batch',scope:f.scope,items,adapter:f.adapter});
+ assert.equal(replay.applied,125);assert.equal(f.writes,1);
 });

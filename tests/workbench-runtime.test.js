@@ -360,6 +360,94 @@ test('custom provider gets one assembled body and plugin settings, then complete
     assert.doesNotMatch(JSON.stringify(capture), /private-channel-key/);
 });
 
+test('a provider tool failure stops remaining calls and model rounds while retaining returned text and reason',async t=>{
+    const h=setup(t),capture=await h.capture({sourceId:'own',channel:{model:'custom-model'}});
+    let requests=0;const calls=[];
+    await assert.rejects(runWorkbench(capture,{messages:task,tools:[tool],
+        requestChannel:async()=>{requests++;return {text:'完整模型正文',reasoning:'已返回的推理',toolCalls:[1,2,3].map(id=>({id:'call-'+id,name:tool.name,arguments:{id}})),finishReason:'tool_calls'};},
+        onTool:async(_,args)=>{calls.push(args.id);if(args.id===2)throw TypeError('草案保存失败：合成错误');return {status:'pending_review'};},
+    }),error=>{
+        assert.equal(error.failure.kind,'tool');assert.equal(error.failure.toolName,tool.name);
+        assert.equal(error.failure.message,'草案保存失败：合成错误');assert.equal(error.failure.errorName,'TypeError');
+        assert.equal(error.partial.text,'完整模型正文');assert.equal(error.partial.reasoning,'已返回的推理');return true;
+    });
+    assert.equal(requests,1);assert.deepEqual(calls,[1,2]);
+});
+
+test('provider request failures have a distinct model category and retain their transport reason',async t=>{
+    const h=setup(t),capture=await h.capture({sourceId:'own',channel:{model:'custom-model',key:'private-provider-key'}});
+    await assert.rejects(runWorkbench(capture,{messages:task,requestChannel:async()=>{throw Error('HTTP 502: private-provider-key upstream unavailable');}}),error=>{
+        assert.equal(error.failure.kind,'model');assert.match(error.message,/模型请求失败.*HTTP 502/);
+        assert.doesNotMatch(JSON.stringify(error.failure),/private-provider-key/);return true;
+    });
+});
+
+test('a native extension exception cancels immediately and cannot be turned into success by a queued finish',async t=>{
+    const h=setup(t),capture=await h.capture();let calls=0,outputReads=0;
+    h.agent.readWorkspaceFile=async()=>{outputReads++;return {text:'错误的完成回复'};};
+    const pending=runWorkbench(capture,{messages:task,tools:[tool],onTool:async()=>{calls++;throw Error('编辑目标未选中：world:w:999');}});
+    const rejected=assert.rejects(pending,error=>{
+        assert.equal(error.failure.kind,'tool');assert.match(error.failure.message,/编辑目标未选中/);
+        assert.equal(error.partial.text,'模型已经返回');return true;
+    });
+    await tick();
+    const event=h.seen.subscribers.get('run-1'),invoke=h.seen.callbacks.get(tool.name);
+    h.seen.live.get('run-1')({type:'responseAppend',invocationId:'inv_root',text:'模型已经返回'});
+    const execution={runId:'run-1',callId:'first',signal:new AbortController().signal};
+    await assert.rejects(invoke({edits:[]},execution),/编辑目标未选中/);
+    event({type:'run_completed',payload:{}});
+    await rejected;await tick();
+    await assert.rejects(invoke({edits:[]},{...execution,callId:'retry'}),/不属于仍在运行/);
+    assert.deepEqual(h.seen.cancelled,['run-1']);assert.equal(calls,1);assert.equal(outputReads,0);
+});
+
+test('native error-file reads cannot delay cancellation or let a following completion hide the failure',async t=>{
+    const h=setup(t),capture=await h.capture();const reads=[];let resolveFile;
+    const path='tool-results/inv_root/round-001-call_test.json';
+    h.agent.readWorkspaceFile=async input=>{reads.push(input);return new Promise(resolve=>{resolveFile=resolve;});};
+    const pending=runWorkbench(capture,{messages:task,tools:[tool],onTool:async()=>({})});
+    const rejected=assert.rejects(pending,error=>{
+        assert.equal(error.failure.kind,'tool');assert.equal(error.failure.resultPath,path);
+        assert.match(error.failure.message,/真实报错.*尾部原因/s);assert.ok(error.failure.message.length>800);
+        assert.doesNotMatch(error.failure.message,/private-route/);return true;
+    });
+    await tick();const event=h.seen.subscribers.get('run-1');
+    event({type:'tool_result_stored',payload:{callId:'failed',invocationId:'inv_root',round:1,path}});
+    event({type:'tool_call_failed',payload:{callId:'failed',invocationId:'inv_root',round:1,name:'propose_changes',errorCode:'extension.tool_error',message:'External tool returned an error'}});
+    event({type:'run_completed',payload:{}});
+    await tick();assert.deepEqual(h.seen.cancelled,['run-1']);
+    assert.deepEqual(reads,[{runId:'run-1',path}]);assert.equal(h.seen.subscribers.size,0);
+    resolveFile({text:JSON.stringify({callId:'failed',content:'真实报错 private-route '+ '细节'.repeat(450)+' 尾部原因',errorCode:'extension.tool_error'})});
+    await rejected;
+});
+
+test('an extension failure before onRunStart persistence finishes is latched and cancelled once',async t=>{
+    const h=setup(t),capture=await h.capture();let releaseStart;
+    const pending=runWorkbench(capture,{messages:task,tools:[tool],
+        onRunStart:()=>new Promise(resolve=>{releaseStart=resolve;}),onTool:async()=>{throw Error('早到的工具错误');}});
+    const rejected=assert.rejects(pending,error=>error.failure.kind==='tool'&&/早到/.test(error.message));
+    await tick();
+    await assert.rejects(h.seen.callbacks.get(tool.name)({edits:[]},{runId:'run-1',callId:'early',signal:new AbortController().signal}),/早到/);
+    await tick();assert.deepEqual(h.seen.cancelled,['run-1']);
+    releaseStart();await rejected;assert.deepEqual(h.seen.cancelled,['run-1']);
+});
+
+test('historical tool logs show real file errors, redact credentials and preserve unreadable-file evidence',async t=>{
+    const h=setup(t),reads=[];
+    const path='tool-results/inv_root/round-001-call_log.json';
+    h.agent.readEvents=async()=>({events:[
+        {seq:19,type:'tool_call_failed',payload:{callId:'failed',name:'propose_changes',errorCode:'extension.tool_error',message:'External tool returned an error; full result: '+path}},
+    ]});
+    h.agent.readWorkspaceFile=async input=>{reads.push(input);return {text:JSON.stringify({content:'补丁原文未唯一命中；x-api-key: secret-key\n'+'详细原因'.repeat(200),arguments:'private draft not for the log'})};};
+    const log=await readWorkbenchRunLog('historic-run',h.runtime);
+    assert.deepEqual(reads,[{runId:'historic-run',path}]);assert.match(log[0].detail,/补丁原文未唯一命中/);
+    assert.ok(log[0].detail.length>800);assert.doesNotMatch(log[0].detail,/secret-key|private draft/);
+    h.agent.readWorkspaceFile=async()=>{throw Error('文件已清理');};
+    const missing=await readWorkbenchRunLog('historic-run',h.runtime);
+    assert.match(missing[0].detail,/extension.tool_error/);assert.ok(missing[0].detail.includes(path));
+    assert.match(missing[0].detail,/读取工具错误文件失败：文件已清理/);assert.deepEqual(h.seen.starts,[]);
+});
+
 test('truncated provider completion and call-ID reuse with different arguments never count as success', async t => {
     const h = setup(t), capture = await h.capture({ sourceId: 'own', channel: { model: 'custom-model' } });
     await assert.rejects(runWorkbench(capture, { messages: task, requestChannel: async () => ({ text: 'half', toolCalls: [], finishReason: 'length' }) }), error => error.code === 'incomplete_response');

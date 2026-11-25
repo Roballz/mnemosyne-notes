@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, archivePhase, jobWorldNames, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, validateArchiveEdits } from '../lib/workbench/model.js';
+import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, archivePhase, jobWorldNames, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, TOOLS } from '../lib/workbench/model.js';
 import { diffText } from '../lib/workbench/diff-worker.js';
 
 test('independent API settings do not inherit memory or story generation settings',()=>{
@@ -105,27 +105,25 @@ test('one rolling key accumulates saved destinations across carry, batches and s
     assert.deepEqual({carry,batches},original,'report aggregation must not rewrite stored carry or batch reports');
 });
 
-test('formal archive containers enforce per-entry limits and count definitions rather than references',()=>{
+test('formal sections used by reports count definitions rather than references without content validation',()=>{
     const content='## P-101 合成人物甲\n'+('甲'.repeat(450))+'\n关联 R-202，仅作引用。\n\n## P-102 合成人物乙\n'+('乙'.repeat(450));
     const item={id:'container',target:{id:'world:w:container',kind:'world'},action:'create',before:null,after:{content,metadata:{comment:'人物档案合集'}}};
-    const catalog=[{id:'world:w:relation',kind:'world',content:'## R-202 合成关系\n关系记录',metadata:{comment:'关系档案'}}];
     assert.ok(content.length>800);
     assert.deepEqual(formalSections(item.after).map(s=>s.id),['P-101','P-102']);
-    assert.doesNotThrow(()=>validateArchiveEdits([item],catalog));
     const duplicate=structuredClone(item);duplicate.after.content+='\n\n## P-101 重复人物\n另一条记录';
-    assert.throws(()=>validateArchiveEdits([duplicate],catalog),/P-101.*重复/);
+    assert.deepEqual(formalSections(duplicate.after).map(s=>s.id),['P-101','P-102','P-101']);
     const tooLong=structuredClone(item);tooLong.after.content='## P-101 合成人物\n'+'甲'.repeat(801);
-    assert.throws(()=>validateArchiveEdits([tooLong],catalog),/P-101.*800/);
+    assert.equal(formalSections(tooLong.after)[0].content,tooLong.after.content);
 });
 
-test('editing one formal section does not reject unchanged legacy sections or ignore ordinary container titles',()=>{
+test('formal report parsing preserves long wording and ordinary container titles; obsolete validation settings are inert',()=>{
     const oldSection='## S-111 合成旧记录\n旧稿已经了结。';
     const before={content:oldSection+'\n\n## S-112 合成新记录\n旧事实',metadata:{comment:'隐藏事实合集'}};
     const after={content:oldSection+'\n\n## S-112 合成新记录\n新增事实',metadata:{comment:'隐藏事实合集'}};
-    const item={id:'container',target:{id:'world:w:container',kind:'world'},action:'replace',before,after};
-    assert.doesNotThrow(()=>validateArchiveEdits([item],[{...item.target,...before}]));
-    const conflict={id:'other',target:{id:'world:w:new',kind:'world'},action:'create',before:null,after:{content:'## S-112 另一项\n合成事实',metadata:{comment:'普通标题'}}};
-    assert.throws(()=>validateArchiveEdits([conflict],[{...item.target,...before}]),/S-112.*重复/);
+    assert.deepEqual(formalSections(after).map(s=>s.id),['S-111','S-112']);
+    assert.equal(formalSections(before)[0].content,oldSection);
+    assert.equal(TOOLS.propose.parameters.properties.operations.maxItems,undefined);
+    assert.equal(settingsWithDefaults({validateArchiveStyle:true}).validateArchiveStyle,undefined);
 });
 
 test('adoption phrases require preceding discussion and preserve edited prompts across upgrades',()=>{
