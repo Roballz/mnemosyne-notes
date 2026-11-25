@@ -10,7 +10,7 @@
     "chatSurface": "registerChatSurface"
   },
   "author": "Roballz",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "homePage": "https://github.com/Roballz/mnemosyne-notes",
   "auto_update": true
 }

@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, archivePhase, jobWorldNames, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, TOOLS } from '../lib/workbench/model.js';
+import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, archivePhase, jobWorldNames, reconcileSavedReports, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, TOOLS } from '../lib/workbench/model.js';
 import { diffText } from '../lib/workbench/diff-worker.js';
 
+function reconcileReport(report,items,outcomes){
+    return reconcileSavedReports([{status:'saved',report,items,outcomes}]);
+}
 test('independent API settings do not inherit memory or story generation settings',()=>{
     const settings=settingsWithDefaults();
     assert.equal(settings.sourceId,'main');assert.deepEqual(settings.channels,[]);
@@ -139,4 +142,22 @@ test('adoption phrases require preceding discussion and preserve edited prompts 
     assert.equal(migrated.duties.archive,edited.duties.archive);assert.equal(migrated.tasks.plan,edited.tasks.plan);
     const plain=validatePlan({batches:[{title:'合成',targets:['P-001']}]});
     assert.equal(plain[0].instructions,'');assert.deepEqual(plain[0].targets,['P-001']);
+});
+
+test('only unique saved destinations count, with local skips, references, deletions and reused numbers kept distinct',()=>{
+    const item=(id,content,action='replace')=>({id,target:{id,kind:'world'},action,after:action==='delete'?null:{content}});
+    const batch=(items,report,skipped=[])=>({status:'saved',items,report,outcomes:items.map(i=>({id:i.id,status:skipped.includes(i.id)?'skipped':'applied'}))});
+    const row=(key,...into)=>({key,into});
+    const a=item('world:w:1','## S-001 合成甲\n正文只引用 S-002');
+    const b=item('world:w:2','S-001 另一同号条目'),d=item('world:w:4','R-004 之后删除');
+    const first=batch([a,d],{cleared:[row('先前唯一','S-001'),row('仅正文提及','S-002'),row('原目标已移除','world:w:4'),row('仍缺另一去向','S-008')]});
+    const second=batch([b,item(d.id,'','delete')],{cleared:[row('同号歧义','S-001'),row('部分匹配',a.target.id,'R-099'),row('空去向'),row('仍缺另一去向',b.target.id)]});
+    const third=batch([a],{cleared:[row('本批跳过',a.target.id)]},[a.id]);
+    const pending=batch([item('world:w:3','S-002 尚未完成')],{});pending.status='partial';
+    const r=reconcileSavedReports([first,second,third,pending]);
+    assert.deepEqual(r.cleared,[row('先前唯一',a.target.id)]);
+    assert.deepEqual(r.retained.map(r=>[r.key,r.into]),[
+        ['仅正文提及',[]],['原目标已移除',[]],['仍缺另一去向',[b.target.id]],['同号歧义',[]],['部分匹配',[a.target.id]],['空去向',[]],['本批跳过',[]],
+    ]);
+    assert.equal(pending.savedReport,undefined);
 });

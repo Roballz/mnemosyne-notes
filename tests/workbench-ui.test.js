@@ -223,3 +223,38 @@ test('message rendering cache stays bounded to the visible 24-message window',as
     c.job.messages.push({role:'assistant',content:'最新消息'});view.render();
     assert.equal(view.messageCache.has(old),false);assert.equal(view.visibleMessages.size,24);assert.equal(view.body.querySelectorAll('.mn-wb-message').length,24);view.close();
 });
+
+test('a queued native close after a complete or partial save cannot write an old review draft',async()=>{
+    for(const complete of [true,false]){
+        const {view,c,batch,document,drafts,click}=setup();
+        batch.reviewIndex=batch.items.length-1;
+        const dialog=reviewBatch(view);
+        dialog.close=()=>{
+            dialog.open=false;
+            setTimeout(()=>dialog.dispatchEvent(new document.defaultView.Event('close')),0);
+        };
+        let submitted;
+        c.saveReviewed=async items=>{
+            submitted=structuredClone(items);
+            if(complete)c.currentBatch=()=>({id:'batch-2'});
+            else batch.status='partial';
+            return {complete};
+        };
+        const edit=dialog.querySelector('.mn-wb-editor');
+        edit.value='最后一项的手改';edit.oninput();
+        click(dialog,'全部保存');await until(()=>!document.querySelector('dialog'));
+        assert.equal(drafts.length,0);
+        assert.equal(submitted.at(-1).after.content,'最后一项的手改');
+        assert.match(view.message.textContent,complete?/本批已保存/:/部分项未保存/);
+    }
+});
+
+test('manual close still saves edits after the final submit throws',async()=>{
+    const {view,c,batch,drafts,click}=setup();batch.reviewIndex=batch.items.length-1;
+    c.saveReviewed=async()=>{throw Error('合成写入失败');};
+    const dialog=reviewBatch(view);click(dialog,'全部保存');
+    await until(()=>dialog.querySelector('.mn-error')?.textContent==='合成写入失败');
+    const edit=dialog.querySelector('.mn-wb-editor');edit.value='保留失败后的修订';edit.oninput();dialog.close();
+    await until(()=>drafts.length===1);
+    assert.equal(drafts.at(-1).value.at(-1).after.content,'保留失败后的修订');
+});

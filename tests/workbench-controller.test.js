@@ -192,8 +192,11 @@ test('concurrent save clicks cannot duplicate writes while validating source',as
     const {c,saved}=setup(),job=await c.newJob();
     await c.onTool(job,'plan','plan_archive',{batches:[plan.batches[0]]});
     await c.onTool(job,'edit','propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'新内容'}]});
-    let release;c.verifySource=()=>new Promise(resolve=>{release=resolve;});
+    let start,release;
+    const verifying=new Promise(resolve=>{start=resolve;});
+    c.verifySource=()=>new Promise(resolve=>{release=resolve;start();});
     const first=c.saveReviewed(c.currentBatch().items);
+    await verifying;
     await assert.rejects(()=>c.saveReviewed(c.currentBatch().items),/等待/);
     release();await first;assert.equal(saved.length,1);
 });
@@ -448,4 +451,57 @@ test('archive discusses, registers an approved revision, and takes direction bet
         assert.match(o.messages.at(-1).content,/本批目标：P-002、R-003/);return {text:'测试结束'};
     };
     await c.send('继续下一批');assert.equal(saved.length,1);
+});
+
+test('opening or resuming a v0.2.6 archive repairs two saved reports before continuing its third review',async()=>{
+    for(const via of ['open','resume']){
+        const {c,api,settings,jobs,saved}=setup(),job=await c.newJob();
+        const row=(key,...into)=>({key,into});
+        const stale={cleared:[],retained:[{key:'旧误报',into:[],reason:'待核对'}],closed:[]};
+        function batch(n,content,report){
+            const id='item-'+n,target={id:'world:w:'+n,kind:'world',world:'合成世界',uid:n};
+            return {id:'batch-'+n,index:n-1,title:'合成第'+n+'批',status:'saved',
+                items:[{id,action:'replace',target,before:state('旧文'),after:state(content),accepted:true}],
+                outcomes:[{itemId:id,status:'applied',target}],report,savedReport:structuredClone(stale)};
+        }
+        const first=batch(1,'## S-001 合成甲',{cleared:[row('两批共同归档','S-001','P-002'),row('待第三批','R-003')]});
+        const second=batch(2,'**P-002** 合成乙',{cleared:[row('引用第一批','S-001')],
+            retained:[{...row('仍在进行','P-002'),reason:'明确保留'}]});
+        const third=batch(3,'## R-003 手动修订',{cleared:[row('第三批回指','P-002')]});
+        third.status='review';third.reviewIndex=0;delete third.outcomes;delete third.savedReport;
+        job.batches=[first,second,third];job.status='review';job.report=stale;
+        await c.persist();c.job=null;
+        api.storage.listJobs=async()=>[{id:job.id,status:'review',mode:'archive'}];
+        const originalDraft=structuredClone(third);
+        let puts=0;const put=api.storage.putJob;
+        api.storage.putJob=async value=>{puts++;await put(value);};
+        if(via==='open'){await c.open();await c.open();}else await c.resume(job.id);
+        assert.equal(puts,1,'repair shares resume persistence and repeated open is read-only');
+        assert.deepEqual(c.currentBatch(),originalDraft);
+        assert.deepEqual(c.job.batches.map(b=>b.status),['saved','saved','review']);
+        assert.deepEqual(c.job.report.cleared,[row('两批共同归档','world:w:1','world:w:2'),row('引用第一批','world:w:1')]);
+        assert.deepEqual(c.job.report.retained.map(r=>r.key),['待第三批','仍在进行']);
+        assert.deepEqual(jobs.get(job.id).report,c.job.report);
+        assert.deepEqual(c.job.batches[0].report,first.report);
+        assert.equal(saved.length,0);assert.equal(settings.get(scope.chatKey).archivedFloor,100);
+        await c.saveReviewed(c.currentBatch().items);
+        assert.deepEqual(saved.map(s=>s.batchId),[job.id+':batch-3']);
+        assert.deepEqual(c.job.report.cleared.map(r=>r.key),['两批共同归档','待第三批','引用第一批','第三批回指']);
+        assert.deepEqual(c.job.report.retained,[{...row('仍在进行','world:w:2'),reason:'明确保留'}]);
+        assert.deepEqual(settings.get(scope.chatKey).retained,c.job.report.retained);
+        assert.match(c.job.finalReport,/共4个/);
+        const next=await c.newJob();assert.deepEqual(next.carry,[{...row('仍在进行','world:w:2'),reason:'明确保留'}]);
+    }
+});
+
+test('final review checkpoints its edited draft once before checking the source',async()=>{
+    const {c,api,jobs,saved}=setup(),job=await c.newJob();
+    await c.onTool(job,'plan','plan_archive',plan);
+    await c.onTool(job,'edit','propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'生成稿'}]});
+    const edits=structuredClone(c.currentBatch().items);edits[0].after.content='手改稿';
+    let puts=0;const put=api.storage.putJob;api.storage.putJob=async value=>{puts++;await put(value);};
+    c.verifySource=async()=>{throw Error('合成来源变化');};
+    await assert.rejects(()=>c.saveReviewed(edits),/合成来源变化/);
+    assert.equal(puts,1);assert.equal(jobs.get(job.id).batches[0].items[0].after.content,'手改稿');
+    assert.equal(jobs.get(job.id).batches[0].status,'review');assert.equal(saved.length,0);
 });
