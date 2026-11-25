@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { captureScope,listTargets,prepareOperations,applyReviewedItems,personaDescriptor,syncCharacterState } from '../lib/workbench/targets.js';
+import { captureScope,listTargets,prepareOperations,applyReviewedItems,personaDescriptor,syncCharacterState,materialScope } from '../lib/workbench/targets.js';
 
 const copy=v=>structuredClone(v);
 const scope={chatKey:'target-tests',worldNames:['合成书'],characterAvatar:'actor.png',personaAvatar:'user.png',characterName:'合成人物',personaName:'合成用户'};
@@ -36,6 +36,13 @@ test('ambiguous/overlapping patches and wrong captured identities reject before 
  await assert.rejects(()=>prepareOperations([{action:'patch',target:target.id,edits:[{oldText:'前段A',newText:'X'},{oldText:'段A',newText:'Y'}]}],{scope,targets}),/重叠/);
  await assert.rejects(()=>prepareOperations([{action:'replace',target:{kind:'char',avatar:'someone-else.png',field:'description'},content:'bad'}],{scope,targets}),/身份/);
  assert.equal(f.calls.saves,0);
+});
+test('disabled worldbooks and unselected entries reject before any host read',async()=>{
+ const f=fixture(),bounded=materialScope({...scope,worldNames:['合成书','未选全局'],availableWorlds:['合成书','未选全局','其他书']},['合成书']);
+ assert.deepEqual(bounded.worldNames,['合成书']);assert.equal(Object.hasOwn(bounded,'availableWorlds'),false);
+ await assert.rejects(()=>prepareOperations([{action:'create',target:{kind:'world',world:'未选全局'},content:'不得创建'}],{scope:bounded,adapter:f.adapter}),/未启用/);
+ await assert.rejects(()=>prepareOperations([{action:'replace',target:'world:'+encodeURIComponent('合成书')+':1',content:'不得读取'}],{scope:bounded,targets:[],allowedIds:new Set(),adapter:f.adapter}),/未选中/);
+ assert.equal(f.calls.reads,0);assert.equal(f.calls.saves,0);
 });
 test('one grouped save preserves unrelated in-flight edits and isolates changed target conflicts',async()=>{
  const {fixture:f,targets}=await setup(),worlds=targets.filter(t=>t.kind==='world');

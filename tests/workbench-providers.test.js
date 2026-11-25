@@ -1,6 +1,6 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { requestChannel } from '../lib/workbench/providers.js';
+import { requestChannel, listChannelModels, testChannel } from '../lib/workbench/providers.js';
 
 const originalFetch = globalThis.fetch;
 const originalHost = globalThis.SillyTavern;
@@ -186,4 +186,59 @@ test('不支持的协议、URL 内密钥与非法额外头在发出请求之前�
         { extraHeaders: { Host: 'other.invalid' } }, { extraHeaders: { 'X-Test': 'a\r\nb' } },
     ]) await assert.rejects(requestChannel(channel(config), messages), error => error.code === 'INVALID_CHANNEL');
     assert.equal(calls, 0);
+});
+
+test('流式推理单独返回、状态去重，推理与正文回调异常不打断请求', async () => {
+    host(); const reasoning = [], stages = [];
+    globalThis.fetch = async () => sse([
+        event(delta({ reasoning_content: '先核对' })),
+        event(delta({ reasoning_content: '范围。' })),
+        event(delta({ content: 'OK' }, 'stop')), 'data: [DONE]\n\n',
+    ]);
+    const result = await requestChannel(channel({ stream: true }), messages, {
+        onReasoning: (piece, all) => { reasoning.push([piece, all]); throw Error('view closed'); },
+        onText: () => { throw Error('view closed'); }, onStatus: value => stages.push(value),
+    });
+    assert.equal(result.text, 'OK'); assert.equal(result.reasoning, '先核对范围。');
+    assert.deepEqual(reasoning, [['先核对', '先核对'], ['范围。', '先核对范围。']]);
+    assert.equal(stages.filter(value => value.includes('模型推理')).length, 1);
+});
+
+test('模型刷新使用独立通道凭据、无需先填模型，返回去重列表且不改正文设置', async () => {
+    const settings = host(); let sent;
+    globalThis.fetch = async (url, options) => {
+        assert.equal(url, '/api/backends/chat-completions/status');
+        sent = JSON.parse(options.body);
+        return json({ data: [{ id: 'beta' }, { id: 'alpha' }, { id: 'beta' }] });
+    };
+    assert.deepEqual(await listChannelModels(channel({ model: '', key: '', extraHeaders: { 'X-Route': 'route' } })), ['alpha', 'beta']);
+    assert.deepEqual(JSON.parse(sent.custom_include_headers), { Authorization: 'Bearer ', 'X-Route': 'route' });
+    assert.equal(sent.custom_url, 'https://synthetic.invalid/v1');
+    assert.equal(Object.hasOwn(sent, 'messages'), false);
+    assert.deepEqual(settings, { model: 'main-stays', temperature: 1.7, stream: false });
+});
+
+test('模型刷新可取消停滞读取，错误不回显 API 密钥', async () => {
+    host(); const controller = new AbortController(); let signal;
+    globalThis.fetch = async (_, options) => {
+        signal = options.signal;
+        return { ok: true, text: () => new Promise(() => {}) };
+    };
+    const pending = listChannelModels(channel(), { signal: controller.signal });
+    const rejected = assert.rejects(pending, error => error.code === 'ABORTED');
+    await new Promise(resolve => setImmediate(resolve)); controller.abort(); await rejected;
+    assert.equal(signal.aborted, true);
+    globalThis.fetch = async () => json({ error: true, message: 'Invalid synthetic-key' });
+    await assert.rejects(listChannelModels(channel()), error => error.code === 'MODEL_LIST_FAILED' && !error.message.includes('synthetic-key'));
+});
+
+test('连接测试只发送固定短句，实际返回正文后才算成功', async () => {
+    host(); let sent;
+    globalThis.fetch = async (_, options) => { sent = JSON.parse(options.body); return json(full()); };
+    assert.equal((await testChannel(channel({ maxTokens: 20000 }))).text, '检查完成');
+    assert.equal(sent.model, 'test-model'); assert.equal(sent.max_tokens, 4096);
+    assert.deepEqual(sent.messages, [{ role: 'user', content: '这是连接测试。请只回复 OK，不要解释。' }]);
+    assert.equal(Object.hasOwn(sent, 'tools'), false);
+    globalThis.fetch = async () => json({ choices: [{ message: { content: '', reasoning_content: 'only reasoning' }, finish_reason: 'stop' }] });
+    await assert.rejects(testChannel(channel()), error => error.code === 'EMPTY_RESPONSE');
 });

@@ -77,10 +77,10 @@ test('a retained TT timeout opens its log on demand without retrying the request
     Object.assign(c.job,{status:'interrupted',error:'工作台请求超时',nativeRunId:'prior-run',config:{sourceId:'main'}});
     view.showRunLog=async id=>{reads.push(id);};
     await view.open();assert.deepEqual(reads,[]);
-    click(view.body,'查看上次 TT 运行记录');await until(()=>reads.length);
+    click(view.taskbar,'查看上次 TT 运行记录');await until(()=>reads.length);
     assert.deepEqual(reads,['prior-run']);
     c.job.config.sourceId='independent';view.render();
-    assert.doesNotMatch(view.body.textContent,/查看上次 TT 运行记录/);view.close();
+    assert.doesNotMatch(view.taskbar.textContent,/查看上次 TT 运行记录/);view.close();
 });
 test('streaming updates reuse the live text node instead of rebuilding history',async()=>{
     const {view,c}=setup();c.running=true;c.job.messages=[{role:'user',content:'合成任务'}];c.liveText='前缀';
@@ -92,7 +92,7 @@ test('streaming updates reuse the live text node instead of rebuilding history',
 
 test('an unfinished generation cannot open review through the toolbar or review entry point',async()=>{
     const {view,c,document,drafts}=setup();c.running=true;await view.open();
-    const button=[...view.body.querySelectorAll('button')].find(b=>b.textContent==='本批仍在生成…');
+    const button=[...view.taskbar.querySelectorAll('button')].find(b=>b.textContent==='本批仍在生成…');
     assert.ok(button);assert.equal(button.disabled,true);
     assert.throws(()=>reviewBatch(view),/等待|生成/);assert.equal(document.querySelector('dialog'),null);
     c.running=false;c.starting=true;assert.throws(()=>reviewBatch(view),/等待|生成/);
@@ -129,4 +129,63 @@ test('review autosave carries the captured job and batch identity',async()=>{
     editor.value='合成审核草稿';editor.oninput();dialog.close();await until(()=>drafts.length>0);
     assert.deepEqual(expected,[{jobId:c.job.id,batchId:batch.id}]);
     assert.equal(drafts.at(-1).value[0].after.content,'合成审核草稿');
+});
+
+test('one conversation renders the plan table with lazy Markdown details and keeps selectors beside send',async()=>{
+    const {view,c}=setup();
+    c.job.status='planned';c.job.plan=[{title:'整理约定',instructions:'- **S-001** → 补充日期\n- 核对地点',targets:['S-001','P-002']}];
+    c.job.planExplanation='## 需要确认\n\n先核对日期。';
+    c.job.messages=[{role:'user',content:'整理本段'}, {role:'assistant',kind:'plan',content:''},{role:'assistant',content:'计划已提交，请确认。\n\n| 项目 | 状态 |\n|---|---|\n| 日期 | 待确认 |'}];
+    await view.open();
+    assert.equal(view.config.closest('.mn-wb-composer'),view.composer);
+    assert.equal(view.body.querySelectorAll('.mn-wb-plan').length,1);
+    assert.equal(view.body.querySelectorAll('table').length,2);
+    assert.equal(view.body.querySelector('.mn-wb-task'),null);
+    assert.equal(view.body.querySelector('.mn-wb-message>pre'),null);
+    const detail=view.body.querySelector('.mn-wb-plan-detail');assert.equal(detail.hidden,true);assert.equal(detail.querySelector('.mn-wb-markdown'),null);
+    view.body.querySelector('.mn-wb-batch-title').click();
+    assert.equal(detail.hidden,false);assert.equal(detail.querySelectorAll('li').length,2);assert.equal(detail.querySelector('strong').textContent,'S-001');
+    const message=view.body.querySelector('.mn-wb-user'),plan=view.body.querySelector('.mn-wb-plan');view.render();
+    assert.equal(view.body.querySelector('.mn-wb-user'),message);assert.equal(view.body.querySelector('.mn-wb-plan'),plan);assert.equal(detail.hidden,false);
+    view.close();
+});
+
+test('free mode remains discoverable during an idle archive task and picker listeners close cleanly',async()=>{
+    const {view,c,click}=setup(),modes=[];c.job.status='planned';
+    c.switchMode=async mode=>{modes.push(mode);};
+    await view.open();assert.equal(view.mode.disabled,false);
+    view.mode.click();assert.equal(view.mode.getAttribute('aria-expanded'),'true');
+    const option=[...view.panel.querySelectorAll('[role=option]')].find(el=>el.textContent.startsWith('自由模式'));assert.ok(option);option.click();
+    await until(()=>modes.length);assert.deepEqual(modes,['free']);assert.equal(view.mode.getAttribute('aria-expanded'),'false');
+    view.apiPicker.trigger.click();assert.equal(view.apiPicker.trigger.getAttribute('aria-expanded'),'true');
+    view.close();assert.equal(view.apiPicker.trigger.getAttribute('aria-expanded'),'false');
+});
+
+test('reasoning is separate and lazy; status/text bursts reuse existing message and live nodes',async()=>{
+    const {view,c}=setup();c.running=true;c.liveReasoning='已返回的模型推理';c.liveText='';c.liveStatus='等待模型响应';
+    c.job.messages=[{role:'assistant',content:'已有回复',reasoning:'旧推理'}];
+    await view.open();const message=view.body.querySelector('.mn-wb-message'),live=view.live,reasoning=view.liveReasoning;
+    const old=message.querySelector('.mn-wb-reasoning');assert.ok(old);assert.equal(old.querySelector('.mn-wb-markdown'),null);
+    assert.equal(reasoning.hidden,false);assert.equal(view.liveReasoningText.textContent,'');
+    reasoning.open=true;reasoning.ontoggle();assert.equal(view.liveReasoningText.textContent,c.liveReasoning);
+    for(let i=0;i<100;i++){c.liveText='输出'+i;c.liveReasoning='推理'+i;view.update('text');}
+    c.liveStatus='已收到模型正文';view.update('status');await wait(100);
+    assert.equal(view.live,live);assert.equal(view.body.querySelector('.mn-wb-message'),message);assert.equal(view.liveReasoning,reasoning);
+    assert.equal(live.textContent,'输出99');assert.equal(view.liveReasoningText.textContent,'推理99');assert.equal(view.liveStatus.textContent,'已收到模型正文');
+    view.close();
+});
+
+test('progress unlocks task controls after the outer send finishes, and closing a modal shows a completed reply',async()=>{
+    const {view,c}=setup();c.job.status='planned';c.starting=true;
+    await view.open();const start=()=>[...view.taskbar.querySelectorAll('button')].find(b=>b.textContent==='开始第一批');
+    assert.equal(start().disabled,true);c.starting=false;view.update('progress');assert.equal(start().disabled,false);
+    const {el}=view.dialog('临时设置');c.job.messages.push({role:'assistant',content:'已在后台完成'});view.update('state');
+    assert.doesNotMatch(view.body.textContent,/已在后台完成/);el.close();await until(()=>view.body.textContent.includes('已在后台完成'));view.close();
+});
+
+test('message rendering cache stays bounded to the visible 24-message window',async()=>{
+    const {view,c}=setup();c.job.messages=Array.from({length:24},(_,i)=>({role:'assistant',content:'合成消息 '+i}));
+    await view.open();const old=c.job.messages[0];assert.ok(view.messageCache.has(old));
+    c.job.messages.push({role:'assistant',content:'最新消息'});view.render();
+    assert.equal(view.messageCache.has(old),false);assert.equal(view.visibleMessages.size,24);assert.equal(view.body.querySelectorAll('.mn-wb-message').length,24);view.close();
 });

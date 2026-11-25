@@ -27,6 +27,15 @@ function setup(){
     return {c,api,settings,jobs,saved};
 }
 const plan={batches:[{title:'第一批',instructions:'整理第一项'},{title:'第二批',instructions:'整理第二项'}]};
+test('switching mode retains the unfinished archive task and starts free mode without discarding its drafts',async()=>{
+    const {c,jobs,settings}=setup(),job=await c.newJob();
+    await c.onTool(job,'plan','plan_archive',plan);job.status='planned';
+    await c.switchMode('free');
+    assert.equal(c.state.mode,'free');assert.equal(settings.get(scope.chatKey).mode,'free');assert.equal(c.job,null);
+    assert.equal(jobs.get(job.id).status,'planned');assert.equal(jobs.get(job.id).plan.length,2);
+    const free=await c.newJob();assert.equal(free.mode,'free');assert.notEqual(free.id,job.id);
+    c.running=true;await assert.rejects(()=>c.switchMode('archive'),/停止|等待/);assert.equal(c.job,free);
+});
 test('manual archive onboarding retries an existing gap in place and never requests the old history',async()=>{
     const {c,jobs,settings,saved}=setup();
     let historyCalls=0;

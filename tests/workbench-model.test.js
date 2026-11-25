@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, validateArchiveEdits } from '../lib/workbench/model.js';
+import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, jobWorldNames, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, validateArchiveEdits } from '../lib/workbench/model.js';
 import { diffText } from '../lib/workbench/diff-worker.js';
 
 test('independent API settings do not inherit memory or story generation settings',()=>{
@@ -60,7 +60,25 @@ test('retained rolling keys survive across tasks and no raw rolling deletion is 
 test('planning requires bounded, meaningful batches and exposes allowed books',()=>{
     assert.throws(()=>validatePlan({batches:[]}));assert.throws(()=>validatePlan({batches:[{title:'empty'}]}));
     const plan=validatePlan({batches:[{title:'合成批次',instructions:'整理一项'}]});assert.equal(plan[0].id,'batch-1');
-    assert.match(taskInstructions({scope:{worldNames:['合成世界']},batches:[],firstFloor:0,lastFloor:9},settingsWithDefaults(),'plan'),/合成世界/);
+    assert.match(taskInstructions({scope:{worldNames:['合成世界']},enabledWorlds:['合成世界'],batches:[],firstFloor:0,lastFloor:9},settingsWithDefaults(),'plan'),/合成世界/);
+});
+test('book permissions begin with User/Char and migrate explicit entry choices without enabling other books',()=>{
+    const targets=[{id:'user:u:description',kind:'user',selected:true},{id:'world:synthetic:1',kind:'world',world:'甲书',selected:true},{id:'world:global:2',kind:'world',world:'全局书',selected:true}];
+    const fresh=materialSelection(targets,{},['甲书','全局书']);
+    assert.deepEqual([...fresh.selected],['user:u:description']);assert.deepEqual([...fresh.enabledWorlds],[]);
+    const old=materialSelection(targets,{selectedTargetIds:['world:synthetic:1']},['甲书','全局书']);
+    assert.deepEqual([...old.enabledWorlds],['甲书'],'actual target identity takes precedence over an encoded fixture ID');
+    const disabled=materialSelection(targets,{selectedTargetIds:['world:synthetic:1'],enabledWorlds:[]},['甲书','全局书']);
+    assert.deepEqual([...disabled.selected],[]);assert.deepEqual([...disabled.enabledWorlds],[]);
+    const blank=materialSelection(targets,{selectedTargetIds:[],enabledWorlds:['甲书']},['甲书','全局书']);
+    assert.deepEqual([...blank.selected],[]);assert.deepEqual([...blank.enabledWorlds],['甲书']);
+});
+test('legacy tasks expose only books inferred from explicit world entry IDs',()=>{
+    const job={scope:{worldNames:['甲:书','未选全局']},selectedTargetIds:['world:'+encodeURIComponent('甲:书')+':3'],batches:[],firstFloor:0,lastFloor:9};
+    assert.deepEqual(jobWorldNames(job),['甲:书']);
+    const prompt=taskInstructions(job,settingsWithDefaults(),'plan');
+    assert.match(prompt,/甲:书/);assert.doesNotMatch(prompt,/未选全局/);
+    assert.deepEqual(jobWorldNames({...job,enabledWorlds:[]}),[]);
 });
 test('diff reconstructs both versions for disjoint edits, emoji and repeated lines',()=>{
     for(const [before,after] of [['甲\n乙\n丙\n','甲\n丁\n丙\n'],['🙂旧段\n相同\n尾旧','🙃新段\n相同\n尾新'],['','新增'],['旧',''],['重复\n'.repeat(5000)+'旧','重复\n'.repeat(5000)+'新']]){

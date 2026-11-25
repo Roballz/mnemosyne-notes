@@ -198,6 +198,68 @@ test('named preset reads layout without changing live settings; plugin controls 
     assert.doesNotMatch(JSON.stringify(capture), /hidden-header|private-route|secret-ref/);
 });
 
+test('Claude reverse proxy preserves current per-source auth headers in both assembly and frozen connection', async t => {
+    const h = setup(t);
+    Object.assign(h.settings, { chat_completion_source: 'claude', claude_model: 'claude-test',
+        reverse_proxy: 'https://proxy.invalid/v1', proxy_password: 'synthetic-proxy-key',
+        additional_parameters_by_source: { claude: { include_headers: 'X-Api-Key: synthetic-route-key\nX-Route: archive',
+            include_body: 'messages: []\nmax_tokens: 1', exclude_body: 'tools' } } });
+    h.runtime.openai.getChatCompletionModel = settings => settings.claude_model;
+    const original = copy(h.settings), capture = await h.capture(), saved = runtimeCapture(capture);
+    const assembled = await assembleWorkbenchPrompt(capture, task);
+    const expected = { include_headers: 'X-Api-Key: synthetic-route-key\nX-Route: archive', include_body: '', exclude_body: '' };
+    for (const value of [saved.settings, saved.frozen.currentModelConnection.settings, assembled.promptSnapshot.generationParameters]) {
+        assert.equal(value.chat_completion_source, 'claude');
+        assert.equal(value.reverse_proxy, 'https://proxy.invalid/v1');
+        assert.equal(value.proxy_password, 'synthetic-proxy-key');
+        assert.deepEqual(value.additional_parameters_by_source.claude, expected);
+    }
+    assert.equal(saved.settings.temp_openai, 0.25);
+    assert.equal(saved.settings.openai_max_tokens, 6000);
+    assert.equal(saved.settings.show_thoughts, true);
+    assert.ok(saved.settings.extensions.tauritavern.omit_params.includes('reasoning_effort'));
+    assert.deepEqual(h.settings, original);
+    assert.doesNotMatch(JSON.stringify(capture), /synthetic-proxy-key|synthetic-route-key/);
+});
+
+test('native reasoning is coalesced separately and the final snapshot replaces provisional text', async t => {
+    const h = setup(t), capture = await h.capture(), thoughts = [], stages = [];
+    const pending = runWorkbench(capture, { messages: task, tools: [tool],
+        onReasoning: (_, all) => thoughts.push(all), onStatus: stage => stages.push(stage) });
+    await tick();
+    const live = h.seen.live.get('run-1');
+    live({ type: 'responseAppend', invocationId: 'first', reasoning: '检查材料。' });
+    live({ type: 'responseAppend', invocationId: 'first', reasoning: '准备计划。' });
+    live({ type: 'responseReplace', response: { invocationId: 'first', text: '已提交', reasoning: '检查材料。准备计划。' } });
+    live({ type: 'responseAppend', invocationId: 'second', reasoning: '结束。', text: '临时说明' });
+    h.seen.subscribers.get('run-1')({ type: 'run_completed', payload: {} });
+    const result = await pending;
+    assert.equal(result.text, '本批已完整提交。');
+    assert.equal(result.reasoning, '检查材料。准备计划。\n\n结束。');
+    assert.equal(thoughts.at(-1), result.reasoning);
+    assert.equal(stages.filter(value => value === '已收到模型推理').length, 1);
+    assert.equal(h.seen.live.size, 0);
+});
+
+test('native failure retains an actionable provider error while hiding proxy and header credentials', async t => {
+    const h = setup(t);
+    h.settings.additional_parameters_by_source = { claude: { include_headers: 'X-Route: synthetic-route' } };
+    const capture = await h.capture();
+    const pending = runWorkbench(capture, { messages: task, tools: [tool] });
+    const rejected = assert.rejects(pending, error => {
+        assert.match(error.message, /HTTP 401.*invalid x-api-key/);
+        assert.doesNotMatch(error.message, /private-route|synthetic-route|another-secret|private-prompt/);
+        assert.equal(error.runId, 'run-1'); return true;
+    });
+    await tick();
+    h.seen.subscribers.get('run-1')({ type: 'model_call_attempt_failed', payload: {
+        message: 'HTTP 401: invalid x-api-key; private-route synthetic-route Bearer another-secret', prompt: 'private-prompt',
+    } });
+    h.seen.subscribers.get('run-1')({ type: 'run_failed', payload: { message: '模型调用失败' } });
+    await rejected;
+    assert.equal(h.seen.subscribers.size, 0);
+});
+
 test('assembly rejects missing body, selected target or duties before any paid run', async t => {
     for (const missing of ['<workbench_floor index="0">', '<worldbook_entry', '<workbench_duties>']) {
         const h = setup(t, { transform: messages => messages.filter(m => !m.content.includes(missing)) });
