@@ -116,13 +116,14 @@ test('old native timeout can read its recent stages without retrying or showing 
         assert.deepEqual(input,{runId:'old-run',beforeSeq:Number.MAX_SAFE_INTEGER,limit:40});
         return {events:[
             {seq:16,type:'model_call_attempt_started',payload:{round:2,attempt:1}},
-            {seq:17,type:'model_call_attempt_failed',payload:{message:'HTTP 429 with private credentials'}},
+            {seq:17,type:'model_call_attempt_failed',payload:{message:'HTTP 429 invalid x-api-key: old-credential'}},
             {seq:18,type:'run_cancelled',payload:{message:'private cancellation details'}},
         ]};
     };
     const log=await readWorkbenchRunLog('old-run',h.runtime);
-    assert.match(log.join('\n'),/第2轮.*第1次尝试/);assert.match(log[1],/模型调用失败.*HTTP 429/);
-    assert.match(log[2],/已取消/);assert.doesNotMatch(log.join('\n'),/private/);
+    assert.match(log[0].label,/第2轮.*第1次尝试/);assert.match(log[1].label,/模型调用失败.*HTTP 429/);
+    assert.match(log[1].detail,/HTTP 429.*已隐藏/);
+    assert.match(log[2].label,/已取消/);assert.doesNotMatch(JSON.stringify(log),/private|old-credential/);
     assert.deepEqual(h.seen.starts,[]);
 });
 
@@ -434,4 +435,39 @@ test('selected entries sharing the same outlet all survive in insertion order', 
     assert.equal(outlet.value, targetMaterial(first) + '\n' + targetMaterial(second));
     assert.ok(snapshotText(result.promptSnapshot).includes(targetMaterial(first)));
     assert.ok(snapshotText(result.promptSnapshot).includes(targetMaterial(second)));
+});
+
+test('plain main discussion uses frozen settings, sends no Agent tools and requires a complete Claude stream',async t=>{
+    const h=setup(t),capture=await h.capture(),frames=[
+        {type:'content_block_delta',delta:{thinking:'思考'}},
+        {type:'content_block_delta',delta:{text:'第一批合成条目，第二批合成人物。'}},
+        {type:'message_delta',delta:{stop_reason:'end_turn'}},{type:'message_stop'},
+    ];
+    h.ctx.getRequestHeaders=()=>({'X-CSRF-Token':'synthetic'});
+    h.runtime.openai.createGenerationParameters=async(settings,model,type,messages,options)=>{
+        assert.equal(settings.proxy_password,'private-route');assert.equal(settings.openai_max_tokens,6000);
+        assert.equal(options.allowToolCalls,false);assert.doesNotMatch(JSON.stringify(messages),/workspace[.]write_file/);
+        return {generate_data:{model,messages,chat_completion_source:'claude',stream:true}};
+    };
+    let calls=0;
+    t.mock.method(globalThis,'fetch',async(url,options)=>{
+        calls++;assert.equal(url,'/api/backends/chat-completions/generate');
+        const sent=JSON.parse(options.body);assert.equal(sent.tools,undefined);assert.equal(sent.type,'quiet');
+        return new Response(frames.map(frame=>'data: '+JSON.stringify(frame)+'\n\n').join(''),{headers:{'content-type':'text/event-stream'}});
+    });
+    const result=await runWorkbench(capture,{plainReply:true,messages:task,tools:[]});
+    assert.equal(result.text,'第一批合成条目，第二批合成人物。');assert.equal(result.reasoning,'思考');
+    frames.pop();
+    await assert.rejects(runWorkbench(capture,{plainReply:true,messages:task}),e=>e.code==='TRUNCATED'&&e.partial.text.includes('第一批'));
+    assert.equal(calls,2);assert.deepEqual(h.seen.starts,[]);
+});
+
+test('plan registration uses the discussion and never reads the selected story range or archive text',async t=>{
+    const h=setup(t),capture=await h.capture({discussionOnly:true,firstFloor:100,lastFloor:199,
+        reader:{sync:()=>assert.fail('range read'),read:()=>assert.fail('story read')}});
+    assert.deepEqual(capture.rawMessages,[]);assert.deepEqual(capture.selectedTargets,[]);
+    assert.equal(capture.historyBlock,'');
+    const result=await assembleWorkbenchPrompt(capture,[{role:'assistant',content:'商定的第二批'},{role:'user',content:'开始整理'}]);
+    const text=snapshotText(result.promptSnapshot);assert.match(text,/商定的第二批/);
+    assert.doesNotMatch(text,/正文\n<endTime>|世界事实|早先完整总结/);
 });

@@ -75,10 +75,14 @@ test('hiding the workbench does not stop a background run or touch story UI',asy
 test('a retained TT timeout opens its log on demand without retrying the request',async()=>{
     const {view,c,click}=setup(),reads=[];
     Object.assign(c.job,{status:'interrupted',error:'工作台请求超时',nativeRunId:'prior-run',config:{sourceId:'main'}});
-    view.showRunLog=async id=>{reads.push(id);};
+    c.api={readWorkbenchRunLog:async id=>{
+        reads.push(id);return [{label:'#16 模型调用失败',detail:'流在 message_stop 之前中断'},{label:'#17 TT 已安排重试',detail:''}];
+    }};
     await view.open();assert.deepEqual(reads,[]);
     click(view.taskbar,'查看上次 TT 运行记录');await until(()=>reads.length);
     assert.deepEqual(reads,['prior-run']);
+    const failure=await until(()=>view.root.querySelector('.mn-wb-run-log details'));
+    assert.equal(failure.open,true);assert.match(failure.textContent,/message_stop/);
     c.job.config.sourceId='independent';view.render();
     assert.doesNotMatch(view.taskbar.textContent,/查看上次 TT 运行记录/);view.close();
 });

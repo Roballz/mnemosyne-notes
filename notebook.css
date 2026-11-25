@@ -273,6 +273,9 @@
 .mn-wb-table table {width:100%;border-collapse:collapse;text-align:left;font-size:12px;line-height:1.6;color:inherit;background:transparent;}
 .mn-wb-table th {background:var(--tint);font-weight:600;color:var(--muted);text-align:left;}
 .mn-wb-table th,.mn-wb-table td {padding:8px 9px;border:0;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere;}
+.mn-wb-run-log {display:grid;gap:6px;overflow-wrap:anywhere;}
+.mn-wb-run-log summary {cursor:pointer;}
+.mn-wb-run-log pre.mn-wb-prose {margin:4px 0 4px 1em;font-size:.92em;}
 .mn-wb-plan {border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--surface);min-width:0;}
 .mn-wb-plan>.mn-row>strong {font-size:14px;}
 .mn-wb-plan-explanation {margin-top:7px;color:var(--muted);font-size:12px;}

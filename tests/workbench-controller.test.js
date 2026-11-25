@@ -50,7 +50,7 @@ test('manual archive onboarding retries an existing gap in place and never reque
     };
     c.api.runWorkbench=async(_,options)=>{
         requests.push(options.messages);
-        await options.onTool('plan_archive',{batches:[plan.batches[0]]});
+        if(options.tools.some(t=>t.name==='plan_archive'))await options.onTool('plan_archive',{batches:[plan.batches[0]]});
         return {text:'第一批计划'};
     };
     await c.send('整理新的 rolling');
@@ -67,12 +67,15 @@ test('manual archive onboarding retries an existing gap in place and never reque
     await c.select(['world:w:1','world:w:2']);
     await c.resume(failed.id);
     await c.send('',{retry:true});
-    assert.equal(c.job.id,failed.id);assert.equal(c.job.status,'planned');
+    assert.equal(c.job.id,failed.id);assert.equal(c.job.status,'discussion');
     assert.deepEqual(captures.map(x=>[x.firstFloor,x.lastFloor,x.historyBlock]),[[105,250,'']]);
     assert.deepEqual(captures[0].selectedTargets.map(t=>t.id),['world:w:1','world:w:2']);
     assert.deepEqual(requests[0][0],{role:'user',content:'整理新的 rolling'});
     assert.match(requests[0].at(-1).content,/以所选设定衔接前情/);
     assert.equal(historyCalls,1);assert.equal(saved.length,0);
+    await c.send('可以，开始吧');
+    assert.equal(c.job.status,'planned');assert.equal(captures.at(-1).discussionOnly,true);
+    assert.equal(historyCalls,1);
     c.api.runWorkbench=async(_,options)=>{
         await options.onTool('propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'新归档'}]});
         return {text:'请审核本批'};
@@ -84,7 +87,7 @@ test('manual archive onboarding retries an existing gap in place and never reque
     assert.equal(settings.get(scope.chatKey).archivedFloor,250);
     c.api.latestFloor=async()=>270;
     await c.newJob();await c.preview();
-    assert.deepEqual(captures.map(x=>[x.firstFloor,x.lastFloor]),[[105,250],[105,250],[250,270]]);
+    assert.deepEqual(captures.filter(x=>!x.discussionOnly).map(x=>[x.firstFloor,x.lastFloor]),[[105,250],[105,250],[250,270]]);
     assert.equal(historyCalls,1);
     await c.setArchivedFloor(250,false);
     await assert.rejects(()=>c.preview(),/缺口/);
@@ -355,4 +358,54 @@ test('stale review saves cannot write another batch even when item counts match'
     await assert.rejects(()=>c.saveReviewed(oldIds,identity),/过期|新版本/);
     assert.equal(saved.length,1);assert.deepEqual(c.currentBatch().items,current);assert.equal(c.saving,false);
     await c.saveReviewed(current,identity);assert.equal(saved.length,2);assert.equal(job.status,'done');
+});
+
+test('archive discusses, registers an approved revision, and takes direction between independent batches',async()=>{
+    const {c,saved}=setup();
+    c.captureFor=async()=>{c.captureTargets=c.targets;c.captureAllowed=new Set(c.targets.map(t=>t.id));return {};};
+    const toolNames=o=>o.tools.map(t=>t.name);
+    c.api.runWorkbench=async(_,o)=>{
+        assert.deepEqual(toolNames(o),[]);assert.equal(o.plainReply,true);
+        await assert.rejects(o.onTool('plan_archive',plan),/采用方案/);
+        return {text:'合成初稿：按人物分组。'};
+    };
+    await c.send('整理档案');assert.equal(c.job.status,'discussion');assert.deepEqual(c.job.batches,[]);
+    c.api.runWorkbench=async(_,o)=>{
+        assert.deepEqual(toolNames(o),[]);assert.equal(o.plainReply,true);
+        return {text:'合成修订：按时间分为早、晚两批。'};
+    };
+    await c.send('好，但换成按时间分批');assert.deepEqual(c.job.plan,[]);
+    const batches=[{title:'早',targets:['S-001']},{title:'晚',targets:['P-002']}];
+    c.api.runWorkbench=async(_,o)=>{
+        assert.deepEqual(toolNames(o),['plan_archive']);
+        assert.match(JSON.stringify(o.messages),/按时间分为早、晚/);
+        await o.onTool('plan_archive',{batches});return {text:'已登记'};
+    };
+    await c.send('就这样，开始更新');assert.equal(c.job.status,'planned');
+    assert.equal(c.job.plan[0].instructions,'');assert.equal(saved.length,0);
+    c.api.runWorkbench=async(_,o)=>{
+        assert.ok(!toolNames(o).includes('propose_changes'));
+        return {text:'已记下，第二批保留原称呼。'};
+    };
+    await c.send('第二批保留原称呼');assert.equal(c.job.status,'planned');
+    c.api.runWorkbench=async(_,o)=>{
+        assert.match(o.messages.at(-1).content,/本批目标：S-001/);
+        await o.onTool('propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'合成新内容'}]});
+        return {text:'请审核'};
+    };
+    await c.send('开始第一批');assert.equal(c.job.status,'review',c.job.error);
+    await c.saveReviewed(c.currentBatch().items);assert.equal(c.job.status,'ready');
+    const first=structuredClone(c.job.batches[0]);
+    c.api.runWorkbench=async(_,o)=>{
+        assert.ok(!toolNames(o).includes('propose_changes'));
+        await o.onTool('plan_archive',{batches:[{title:'更新后的晚批',targets:['P-002','R-003']}]});
+        return {text:'已调整余下批次'};
+    };
+    await c.send('确定，把剩下的关系条目移到晚批');assert.equal(c.job.status,'ready');
+    assert.deepEqual(c.job.batches[0],first);
+    c.api.runWorkbench=async(_,o)=>{
+        assert.match(JSON.stringify(o.messages),/第二批保留原称呼/);
+        assert.match(o.messages.at(-1).content,/本批目标：P-002、R-003/);return {text:'测试结束'};
+    };
+    await c.send('继续下一批');assert.equal(saved.length,1);
 });

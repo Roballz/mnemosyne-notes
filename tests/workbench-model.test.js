@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, jobWorldNames, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, validateArchiveEdits } from '../lib/workbench/model.js';
+import { DEFAULT_SETTINGS, settingsWithDefaults, validateSettings, rangeFor, nextReminder, selectedIds, materialSelection, archivePhase, jobWorldNames, reconcileReport, aggregateReport, reportMarkdown, validatePlan, taskInstructions, formalSections, validateArchiveEdits } from '../lib/workbench/model.js';
 import { diffText } from '../lib/workbench/diff-worker.js';
 
 test('independent API settings do not inherit memory or story generation settings',()=>{
@@ -126,4 +126,19 @@ test('editing one formal section does not reject unchanged legacy sections or ig
     assert.doesNotThrow(()=>validateArchiveEdits([item],[{...item.target,...before}]));
     const conflict={id:'other',target:{id:'world:w:new',kind:'world'},action:'create',before:null,after:{content:'## S-112 另一项\n合成事实',metadata:{comment:'普通标题'}}};
     assert.throws(()=>validateArchiveEdits([conflict],[{...item.target,...before}]),/S-112.*重复/);
+});
+
+test('adoption phrases require preceding discussion and preserve edited prompts across upgrades',()=>{
+    const job={mode:'archive',messages:[],plan:[]};
+    assert.equal(archivePhase(job,'好'),'discuss');
+    job.messages.push({role:'assistant',content:'两批方案'});
+    for(const input of ['好','可以，开始吧','就这样，开始更新','开始整理','开始归档'])assert.equal(archivePhase(job,input),'plan');
+    assert.equal(archivePhase(job,'好，但重分第二批'),'discuss');
+    assert.equal(archivePhase(job,'沿用我们刚商量的顺序，着手处理即可'),'negotiate');
+    job.plan=[{title:'本批'}];assert.equal(archivePhase(job,'下一批少写背景'),'batchChat');
+    const edited={duties:{archive:'我的归档职责'},tasks:{plan:'我的规划提示'}};
+    const migrated=settingsWithDefaults({schemaVersion:2,...edited});
+    assert.equal(migrated.duties.archive,edited.duties.archive);assert.equal(migrated.tasks.plan,edited.tasks.plan);
+    const plain=validatePlan({batches:[{title:'合成',targets:['P-001']}]});
+    assert.equal(plain[0].instructions,'');assert.deepEqual(plain[0].targets,['P-001']);
 });
