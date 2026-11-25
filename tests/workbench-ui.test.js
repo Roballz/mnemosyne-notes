@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseHTML } from 'linkedom/worker';
 import { WorkbenchView } from '../lib/workbench/view.js';
-import { reviewBatch } from '../lib/workbench/review.js';
+import { metadataEditor,reviewBatch } from '../lib/workbench/review.js';
 import { settingsWithDefaults } from '../lib/workbench/model.js';
 const wait=ms=>new Promise(r=>setTimeout(r,ms));
 async function until(fn){for(let i=0;i<80;i++){const value=fn();if(value)return value;await wait(5);}throw Error('UI did not settle');}
@@ -44,6 +44,18 @@ test('sequential review edits directly, skips one target, and saves only at fina
     click(dialog,'全部保存');await until(()=>writes.length===1);await until(()=>!document.querySelector('dialog'));
     assert.equal(writes[0][0].accepted,true);assert.equal(writes[0][1].accepted,false);assert.equal(writes[0][2].accepted,true);
     assert.equal(writes[0][0].after.content,'人工修订甲\n共同');
+});
+test('the review role selector follows injection position without changing the draft on open',()=>{
+    const {batch,document}=setup(),item=batch.items[0],metadata=item.after.metadata;
+    metadata.role=null;
+    const grid=metadataEditor(item);
+    const control=name=>[...grid.querySelectorAll('label')].find(label=>label.firstChild.textContent===name).querySelector('select');
+    const position=control('插入位置'),role=control('注入角色');
+    const choose=(select,value)=>{select.value=value;select.dispatchEvent(new document.defaultView.Event('change',{bubbles:true}));};
+    assert.equal(role.disabled,true);assert.equal(role.value,'');assert.equal(metadata.role,null);
+    choose(position,'4');assert.equal(role.disabled,false);assert.equal(metadata.role,0);
+    choose(role,'2');assert.equal(metadata.role,2);
+    choose(position,'1');assert.equal(role.disabled,true);assert.equal(role.value,'');assert.equal(metadata.role,null);
 });
 test('closing review retains the draft without any host write',async()=>{
     const {view,writes,drafts}=setup(),dialog=reviewBatch(view),edit=dialog.querySelector('.mn-wb-editor');

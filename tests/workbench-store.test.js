@@ -66,6 +66,40 @@ test('a reopened archive draft saves TT recursion toggles and levels unchanged i
  assert.equal((await saveBatch(options)).complete,true);
  assert.equal(f.writes,1);
 });
+test('reopening a reviewed draft preserves inactive roles and untouched legacy properties',async()=>{
+ const f=fixture(),jobId='role-draft',batchId='first';
+ f.change(book=>{
+  Object.assign(book.entries[0],{position:0,role:null,scanDepth:'8'});
+  book.entries[1]={uid:1,position:4,role:2,content:'旧原文'};
+  book.originalData.entries.push({uid:1,content:'旧原文',extensions:{role:2}});
+ });
+ const {targets}=await listTargets(f.scope,{adapter:f.adapter});
+ const items=await prepareOperations(targets.map(target=>({action:'replace',target:target.id,content:'定稿'+target.uid})),{scope:f.scope,targets});
+ await putJob({id:jobId,scope:f.scope,mode:'archive',status:'review',batches:[{id:batchId,items}]});
+ const job=await getJob(jobId),options={scope:f.scope,adapter:f.adapter,jobId,batchId,items:job.batches[0].items};
+ assert.equal((await saveBatch(options)).applied,2);
+ assert.equal(f.durable.entries[0].content,'定稿0');
+ assert.equal(f.durable.entries[0].role,null);
+ assert.equal(f.durable.entries[0].scanDepth,'8');
+ assert.deepEqual(f.durable.originalData.entries[0].extensions,{preserve:8});
+ assert.equal(f.durable.entries[1].role,2);
+ assert.equal((await saveBatch(options)).complete,true);
+ assert.equal(f.writes,1);
+});
+test('editing a role still rejects invalid values before writing and identifies the entry',async()=>{
+ const f=fixture();
+ f.change(book=>{Object.assign(book.entries[0],{position:4,role:1});});
+ const items=await proposal(f),options={scope:f.scope,batchId:'change-role',items,adapter:f.adapter};
+ for(const invalid of [3,'1',false]){
+  items[0].after.metadata.role=invalid;
+  await assert.rejects(()=>saveBatch(options),/合成条目.*消息角色超出允许范围/);
+ }
+ assert.equal(f.writes,0);
+ Object.assign(items[0].after.metadata,{position:0,role:null});
+ assert.equal((await saveBatch(options)).applied,1);
+ assert.equal(f.durable.entries[0].role,null);
+ assert.equal(f.durable.originalData.entries[0].extensions.role,null);
+});
 test('lost create acknowledgement recovers original UID without duplicate entries',async()=>{
  const f=fixture(),items=await proposal(f,[{action:'create',target:{kind:'world',world:'合成书'},content:'新建内容',metadata:{comment:'新建条目',light:'blue'}}]);let attempts=0,failRead=true;
  f.adapter.saveWorld=async(name,data)=>{attempts++;f.setLive(data);f.setDurable(data);throw Error('lost acknowledgement');};
