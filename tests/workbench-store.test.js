@@ -2,8 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { database,meta } from '../lib/db.js';
-import { getSettings,saveSettings,putJob,getJob,listJobs,saveBatch,getBatchOutcomes,listSnapshots,getSnapshot,restoreSnapshot,exportSnapshots,pruneSnapshots } from '../lib/workbench/store.js';
+import { getSettings,saveSettings,putJob,getJob,listJobs,markArchivedKey,saveBatch,getBatchOutcomes,listSnapshots,getSnapshot,restoreSnapshot,exportSnapshots,pruneSnapshots } from '../lib/workbench/store.js';
 import { listTargets,prepareOperations } from '../lib/workbench/targets.js';
+import { WorkbenchController } from '../lib/workbench/controller.js';
+import { reportMarkdown, settingsWithDefaults, taskInstructions } from '../lib/workbench/model.js';
 
 const copy=v=>structuredClone(v),req=r=>new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
 const txDone=tx=>new Promise((resolve,reject)=>{tx.oncomplete=resolve;tx.onabort=tx.onerror=()=>reject(tx.error);});
@@ -175,4 +177,61 @@ test('more than 100 reviewed operations persist without a hidden cap or repeated
  assert.equal(Object.values(f.durable.entries).filter(entry=>entry.content===content).length,125);
  const replay=await saveBatch({batchId:'large-batch',scope:f.scope,items,adapter:f.adapter});
  assert.equal(replay.applied,125);assert.equal(f.writes,1);
+});
+
+test('confirmed manual corrections update old task reports and the next request together',async()=>{
+ const scope={chatKey:'legacy-archive-correction',worldNames:[]},target='world:w:1';
+ const retained=['确认一','确认二','仍须保留'].map(key=>({key,reason:'待核对',into:[target]}));
+ const report={cleared:[],retained,closed:[]},titles={[target]:'隐藏认知'};
+ const task={id:'legacy-archive-done',scope,mode:'archive',status:'abandoned',createdAt:1,completedAt:2,
+  firstFloor:100,lastFloor:150,messages:[{role:'assistant',content:'原讨论'}],batches:[],report,finalReport:reportMarkdown(report,titles)};
+ await putJob(task);
+ await saveSettings(scope,{retained,archivedFloor:150,remindedAt:150});
+ const controller=new WorkbenchController({
+  targets:{captureScope:async()=>scope,listTargets:async()=>({targets:[],worlds:[]})},
+  latestFloor:async()=>200,listPresets:async()=>[],
+ });
+ await controller.open();
+ const unstarted=await controller.newJob();
+ assert.deepEqual(unstarted.carry,retained);
+ await controller.resume(task.id);
+ assert.equal(controller.job.status,'done');
+ controller.targets=[{id:target,title:titles[target]}];
+ for(const key of ['确认一','确认二'])assert.equal(await controller.markArchivedKey(controller.job,key),true);
+ const saved=await getJob(task.id);
+ assert.deepEqual(saved.report.cleared,retained.slice(0,2).map(({key,into})=>({key,into})));
+ assert.deepEqual(saved.report.retained,retained.slice(2));
+ assert.deepEqual(saved.messages,task.messages);
+ assert.equal(saved.finalReport,reportMarkdown(saved.report,titles));
+ assert.deepEqual(await getSettings(scope),{mode:'archive',retained:retained.slice(2),retainedJobId:task.id,archivedFloor:150,remindedAt:150});
+ assert.equal((await markArchivedKey({scope,jobId:task.id,key:'确认一',titles})).removedFromCarry,false);
+ await controller.abandon();
+ assert.equal((await getJob(task.id)).status,'done');
+ const next=await controller.newJob(),prompt=taskInstructions(next,settingsWithDefaults(),'discuss');
+ assert.match(prompt,/仍须保留/);
+ assert.doesNotMatch(prompt,/确认一|确认二|原讨论/);
+ await controller.resume(unstarted.id);
+ controller.captureFor=async()=>({});
+ let dispatched;
+ controller.api.runWorkbench=async(_,request)=>{dispatched=request.messages.at(-1).content;return {text:'新一轮规划'};};
+ await controller.send('继续整理');
+ assert.match(dispatched,/仍须保留/);
+ assert.doesNotMatch(dispatched,/确认一|确认二|原讨论/);
+});
+
+test('editing a completed report preserves a newer task’s matching carry, with and without provenance',async()=>{
+ for(const provenance of [false,true]){
+  const scope={chatKey:'same-floor-'+provenance},retained=[{key:'同名事项',reason:'待核对',into:['world:w:1']}];
+  const report={retained,cleared:[],closed:[]};
+  const done={scope,mode:'archive',status:'done',lastFloor:200,report,finalReport:reportMarkdown(report),batches:[]};
+  const older={...done,id:'older-'+provenance,createdAt:100,completedAt:110,updatedAt:115};
+  const newer={...done,id:'newer-'+provenance,createdAt:120,completedAt:130,updatedAt:135};
+  await putJob(older);await putJob(newer);
+  await saveSettings(scope,{archivedFloor:200,retained,...(provenance?{retainedJobId:newer.id}:{})});
+  await assert.rejects(()=>markArchivedKey({scope:'other',jobId:older.id,key:'同名事项'}),/本聊天/);
+  assert.equal((await markArchivedKey({scope,jobId:older.id,key:'同名事项'})).removedFromCarry,false);
+  assert.equal((await getJob(older.id)).report.cleared[0].key,'同名事项');
+  assert.deepEqual((await getSettings(scope)).retained,retained);
+  assert.deepEqual((await getJob(newer.id)).report.retained,retained);
+ }
 });

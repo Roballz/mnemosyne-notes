@@ -286,3 +286,28 @@ test('manual close still saves edits after the final submit throws',async()=>{
     await until(()=>drafts.length===1);
     assert.equal(drafts.at(-1).value.at(-1).after.content,'保留失败后的修订');
 });
+
+test('the retained key’s circle check confirms the named correction and disappears after saving',async()=>{
+    const {view,c,document,click}=setup(),calls=[];
+    c.reportTitles=()=>({'world:w:1':'隐藏认知'});
+    Object.assign(c.job,{status:'done',finalReport:'导出原记录',report:{
+        cleared:[],retained:[{key:'旧 key',reason:'待核对',into:['world:w:1']}],closed:[],
+    }});
+    c.markArchivedKey=async(job,key)=>{
+        calls.push([job.id,key]);
+        const {into}=job.report.retained.pop();job.report.cleared.push({key,into});job.finalReport='导出已更正';
+        view.update('state');
+        return true;
+    };
+    await view.open();
+    const icon=view.body.querySelector('.mn-wb-archive-check');
+    assert.ok(icon.querySelector('svg'));assert.equal(icon.textContent,'');
+    assert.equal(icon.title,'标记为已归档');assert.match(icon.getAttribute('aria-label'),/旧 key/);
+    icon.click();let dialog=document.querySelector('dialog');
+    assert.match(dialog.textContent,/旧 key/);click(dialog,'取消');assert.deepEqual(calls,[]);
+    icon.click();dialog=document.querySelector('dialog');click(dialog,'确认');
+    await until(()=>!view.body.querySelector('.mn-wb-archive-check'));
+    assert.deepEqual(calls,[[c.job.id,'旧 key']]);
+    assert.match(view.body.querySelector('.mn-wb-report').textContent,/共1个.*旧 key.*隐藏认知/);
+    assert.match(view.message.textContent,/已更新本次清单和下次保留清单/);
+});
