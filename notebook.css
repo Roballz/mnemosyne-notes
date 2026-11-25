@@ -324,6 +324,11 @@
 .mn-notebook .mn-wb-dialog {width:min(740px,calc(100vw - 24px));}
 .mn-notebook .mn-wb-review {width:min(960px,calc(100vw - 24px));}
 .mn-wb-dialog .mn-dialog-body {overscroll-behavior:contain;}
+.mn-wb-records {gap:5px;}
+.mn-notebook .mn-wb-records .mn-entry {
+    min-height:38px;padding:4px 9px;border-radius:9px;
+    font-size:12px;line-height:1.35;overflow-wrap:anywhere;
+}
 .mn-wb-materials {display:grid;gap:8px;}
 .mn-wb-material {display:flex;align-items:flex-start;gap:10px;border-bottom:1px solid var(--line);padding:10px 0;}
 .mn-wb-material>input {flex:none;margin-top:1px;}
