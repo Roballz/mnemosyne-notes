@@ -195,6 +195,34 @@ test('free mode remains discoverable during an idle archive task and picker list
     view.close();assert.equal(view.apiPicker.trigger.getAttribute('aria-expanded'),'false');
 });
 
+test('composer uses icon-only triggers and changes only the mode icon after mode selection',async()=>{
+    const {view,c}=setup();c.job.status='done';
+    c.switchMode=async mode=>{c.state.mode=mode;view.renderProgress();};
+    await view.open();
+    const triggers=[view.mode,view.apiPicker.trigger,view.presetPicker.trigger];
+    const glyph=el=>el.querySelector('svg path').getAttribute('d');
+    const original=triggers.map(glyph),apiIcon=triggers[1].firstElementChild,presetIcon=triggers[2].firstElementChild;
+    assert.equal(new Set(original).size,3);
+    for(const trigger of triggers){
+        assert.equal(trigger.textContent,'');assert.ok(trigger.getAttribute('aria-label'));assert.equal(trigger.children.length,1);
+        assert.equal(trigger.hasAttribute('data-short'),false);
+    }
+    view.mode.click();
+    const options=[...view.modePicker.root.querySelectorAll('[role=option]')];
+    assert.equal(options.length,2);assert.equal(glyph(options[0]),original[0]);
+    assert.equal(options[0].getAttribute('aria-selected'),'true');
+    const freeGlyph=glyph(options[1]);assert.notEqual(freeGlyph,original[0]);
+    options[1].click();await until(()=>c.state.mode==='free');
+    assert.equal(glyph(view.mode),freeGlyph);assert.match(view.mode.getAttribute('aria-label'),/自由/);
+    const freeIcon=view.mode.firstElementChild;view.renderProgress();assert.equal(view.mode.firstElementChild,freeIcon);
+    assert.equal(triggers[1].firstElementChild,apiIcon);assert.equal(triggers[2].firstElementChild,presetIcon);
+    view.mode.click();assert.equal(view.modePicker.root.querySelector('[aria-selected=true]').textContent.startsWith('自由模式'),true);
+    view.modePicker.root.querySelector('[role=option]').click();await until(()=>c.state.mode==='archive');
+    assert.equal(glyph(view.mode),original[0]);assert.match(view.mode.getAttribute('aria-label'),/归档/);
+    c.running=true;view.renderProgress();assert.ok(triggers.every(t=>t.disabled));
+    view.close();
+});
+
 test('reasoning is separate and lazy; status/text bursts reuse existing message and live nodes',async()=>{
     const {view,c}=setup();c.running=true;c.liveReasoning='已返回的模型推理';c.liveText='';c.liveStatus='等待模型响应';
     c.job.messages=[{role:'assistant',content:'已有回复',reasoning:'旧推理'}];
