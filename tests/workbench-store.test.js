@@ -42,6 +42,30 @@ test('snapshot journal commits before host mutation; same batch retry is idempot
  const rows=await listSnapshots(f.scope);assert.equal(rows[0].before,undefined);const raw=await req((await database()).transaction('workbenchSnapshots').objectStore('workbenchSnapshots').get(rows[0].id));assert.equal(raw.after,undefined);
  const exportText=await exportSnapshots([rows[0].id]);assert.match(exportText,/旧原文/);assert.match(exportText,/新原文/);assert.match(exportText,/preserve/);
 });
+test('a reopened archive draft saves TT recursion toggles and levels unchanged in one book write',async()=>{
+ const f=fixture(),values=[false,true,0,3];
+ f.change(book=>{
+  for(const [uid,delayUntilRecursion] of values.entries()){
+   book.entries[uid]={uid,content:'旧原文',delayUntilRecursion};
+  }
+  book.originalData.entries=values.map((value,uid)=>({uid,content:'旧原文',extensions:{delay_until_recursion:value}}));
+ });
+ const {targets}=await listTargets(f.scope,{adapter:f.adapter});
+ const items=await prepareOperations(targets.map(t=>({action:'replace',target:t.id,content:'审核定稿'+t.uid})),{scope:f.scope,targets});
+ const jobId='recursion-draft',batchId='first';
+ await putJob({id:jobId,scope:f.scope,mode:'archive',status:'review',batches:[{id:batchId,items}]});
+ const saved=await getJob(jobId);
+ const options={jobId,batchId,scope:f.scope,items:saved.batches[0].items,adapter:f.adapter};
+ const result=await saveBatch(options);
+ assert.equal(result.applied,values.length);
+ for(const [uid,value] of values.entries()){
+  assert.equal(f.durable.entries[uid].content,'审核定稿'+uid);
+  assert.equal(f.durable.entries[uid].delayUntilRecursion,value);
+  assert.equal(f.durable.originalData.entries[uid].extensions.delay_until_recursion,value);
+ }
+ assert.equal((await saveBatch(options)).complete,true);
+ assert.equal(f.writes,1);
+});
 test('lost create acknowledgement recovers original UID without duplicate entries',async()=>{
  const f=fixture(),items=await proposal(f,[{action:'create',target:{kind:'world',world:'合成书'},content:'新建内容',metadata:{comment:'新建条目',light:'blue'}}]);let attempts=0,failRead=true;
  f.adapter.saveWorld=async(name,data)=>{attempts++;f.setLive(data);f.setDurable(data);throw Error('lost acknowledgement');};

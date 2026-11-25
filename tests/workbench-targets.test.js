@@ -30,6 +30,18 @@ test('disjoint exact patches coalesce per target, retaining unknown fields',asyn
  const outcomes=await applyReviewedItems(items,{scope,adapter:f.adapter});assert.equal(outcomes[0].status,'applied');assert.equal(f.calls.saves,1);assert.deepEqual(f.book.entries[0].unknown,{keep:true});
  assert.equal(f.book.originalData.entries[0].extensions.keep,'原始扩展');assert.equal(f.book.originalData.entries[0].extensions.position,4);assert.deepEqual(f.book.originalData.entries[0].keys,['新词']);
 });
+test('proposals accept TT recursion flags and levels while other numeric fields remain strict',async()=>{
+ const {targets}=await setup(),target=targets.find(t=>t.kind==='world').id;
+ const propose=metadata=>prepareOperations([{action:'replace',target,metadata}],{scope,targets});
+ for(const value of [false,true,0,2]){
+  const [item]=await propose({delayUntilRecursion:value});
+  assert.equal(item.after.metadata.delayUntilRecursion,value);
+ }
+ for(const value of [null,'false','2',NaN,Infinity]){
+  await assert.rejects(()=>propose({delayUntilRecursion:value}),/delayUntilRecursion/);
+ }
+ await assert.rejects(()=>propose({probability:false}),/probability/);
+});
 test('ambiguous/overlapping patches and wrong captured identities reject before writes',async()=>{
  const {fixture:f,targets}=await setup(),target=targets.find(t=>t.kind==='world'&&t.uid===0);
  await assert.rejects(()=>prepareOperations([{action:'patch',target:target.id,edits:[{oldText:'段',newText:'节'}]}],{scope,targets}),/唯一/);
