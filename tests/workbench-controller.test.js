@@ -516,3 +516,107 @@ test('final review checkpoints its edited draft once before checking the source'
     assert.equal(puts,1);assert.equal(jobs.get(job.id).batches[0].items[0].after.content,'手改稿');
     assert.equal(jobs.get(job.id).batches[0].status,'review');assert.equal(saved.length,0);
 });
+
+test('archive retries send only unresolved edits and their exact target base across restarts',async()=>{
+    const {c,job,jobs,saved}=await preparedArchive();
+    const target=c.targets[0],base='甲段\nS-1 重名\nS-2 重名\n尾段';
+    target.content=base;
+    const op=edits=>({target:target.id,action:'patch',edits});
+    job.messages.push({role:'user',content:'仅首次发送的分批讨论'});
+    const report={cleared:[{key:'本批记录',into:[target.id]}]};
+    const originalCaptures=[],historyCalls=[],requests=[];
+    c.api.getDefaultPreset=async()=>({});
+    c.api.captureHistory=async()=>{historyCalls.push(1);return {text:'仅首次发送的历史',coverage:{complete:true}};};
+    c.api.captureWorkbenchContext=async options=>{originalCaptures.push(options);return {rawMessages:options.discussionOnly?[]:[{content:'仅首次发送的正文'}]};};
+    let response;
+    c.api.runWorkbench=async(_,opts)=>{
+        requests.push(opts);
+        try{return await response(opts);}catch(error){throw runFailure(error,'tool',{toolName:opts.tools.at(-1).name});}
+    };
+    response=async opts=>{
+        await opts.onTool('propose_changes',{operations:[
+            op([{oldText:'甲段',newText:'修订甲段'}]),
+            op([{oldText:'重名',newText:'乙改稿'},{oldText:'尾段',newText:'已保留尾段'},{oldText:'笔误',newText:'丙改稿'}]),
+            op([{oldText:'乙改稿',newText:'乙定稿'}]),
+            createFormal('已成功的独立草案'),
+        ],report});
+        return {text:'请审核'};
+    };
+    await c.send('',{execute:true});
+    const batch=c.currentBatch(),created=batch.items[0],group=batch.patchRepair.groups[0];
+    assert.equal(requests.length,1);
+    assert.deepEqual(group.pending.map(e=>e.reason),['原文有多处匹配','原文未命中']);
+    assert.equal(jobs.get(job.id).batches[0].items[0].id,created.id);
+    assert.equal(group.ranges.length,1);assert.equal(group.remaining.length,1);
+    assert.equal(job.failure.patches[0].oldText,'重名');assert.equal(job.failure.patches[0].newText,'乙改稿');
+    assert.equal(saved.length,0);
+    await assert.rejects(c.saveReviewed(batch.items),/待修/);
+    const [a,b]=group.pending.map(e=>e.id);
+    await c.resume(job.id);
+    response=async opts=>{
+        assert.deepEqual(opts.tools.map(t=>t.name),['repair_patches']);
+        const prompt=opts.messages.map(m=>m.content).join('\n');
+        assert.match(prompt,/修订甲段/);assert.match(prompt,/乙改稿/);assert.match(prompt,/补充说明/);
+        assert.doesNotMatch(prompt,/已成功的独立草案|已保留尾段|仅首次发送|本批记录/);
+        await opts.onTool('repair_patches',{corrections:[
+            {id:a,oldText:'S-1 重名',newText:'S-1 乙改稿'},
+            {id:b,oldText:'尾段',newText:'错误覆盖'},
+        ]});
+    };
+    await c.send('补充说明',{retry:true});
+    const partial=c.currentBatch().patchRepair.groups[0];
+    assert.deepEqual(partial.pending.map(e=>[e.id,e.oldText,e.newText,e.lastAttempt.oldText]),[[b,'笔误','丙改稿','尾段']]);
+    assert.match(partial.pending[0].reason,/重叠/);assert.equal(partial.ranges.length,2);
+    assert.equal(c.job.status,'interrupted');assert.deepEqual(c.currentBatch().items,[created]);
+    await c.resume(job.id);
+    response=async opts=>{await opts.onTool('repair_patches',{corrections:[{id:a,oldText:'S-2 重名',newText:'不应再次接受'}]});};
+    await c.send('',{retry:true});
+    assert.match(c.job.error,/编号未知/);assert.deepEqual(c.currentBatch().patchRepair.groups[0],partial);
+    response=async opts=>{
+        assert.doesNotMatch(opts.messages.at(-1).content,/乙改稿/);
+        await opts.onTool('repair_patches',{corrections:[{id:b,oldText:'S-2 重名',newText:'S-2 丙改稿'}]});
+        throw runFailure(Error('工具成功后的回复中断'),'model');
+    };
+    await c.send('',{retry:true});
+    const complete=c.currentBatch();assert.equal(complete.patchRepair,undefined);assert.equal(c.job.failure,undefined);
+    assert.equal(c.job.status,'review');assert.equal(complete.items.length,2);
+    assert.equal(complete.items[1].before.content,base);assert.equal(complete.items[1].after.content,'修订甲段\nS-1 乙定稿\nS-2 丙改稿\n已保留尾段');
+    assert.deepEqual(complete.items[0],created);assert.deepEqual(complete.report.cleared,report.cleared);
+    assert.equal(originalCaptures.filter(o=>o.discussionOnly).length,3);assert.equal(historyCalls.length,1);
+    assert.equal(saved.length,0);await c.saveReviewed(complete.items);assert.equal(saved.length,1);
+});
+
+test('a repair checkpoint survives failed persistence, abort and a change of target permissions',async()=>{
+    const {c,job,jobs}=await preparedArchive(),target=c.targets[0];
+    await assert.rejects(c.onTool(job,'edit','propose_changes',{operations:[{action:'patch',target:target.id,
+        edits:[{oldText:'错字',newText:'改稿'}]}]}),/待修/);
+    const before=structuredClone(c.currentBatch()),id=before.patchRepair.groups[0].pending[0].id;
+    const corrections=[{id,oldText:target.content,newText:'改稿'}];
+    const invalid=new AbortController();invalid.abort();
+    await assert.rejects(c.onTool(job,'repair','repair_patches',{corrections},{signal:invalid.signal}),{name:'AbortError'});
+    c.persist=async()=>{throw Error('存储不可用');};
+    await assert.rejects(c.onTool(job,'repair','repair_patches',{corrections}),/存储不可用/);
+    assert.deepEqual(c.currentBatch(),before);assert.deepEqual(jobs.get(job.id).batches[0],before);
+    c.api.targets.captureScope=async()=>({...scope,worldNames:[]});
+    await assert.rejects(c.captureFor(job,'repair'),/超出当前选材/);
+});
+
+test('repairs may arrive in several calls and later operations keep their original target order',async()=>{
+    const {c,job}=await preparedArchive(),one=c.targets[0];
+    const two={...one,id:'world:w:2',uid:2};
+    c.captureTargets=[one,two];c.captureAllowed=new Set([one.id,two.id]);
+    const op=(target,oldText,newText)=>({target,action:'patch',edits:[{oldText,newText}]});
+    await assert.rejects(c.onTool(job,'edit','propose_changes',{operations:[
+        op(one.id,'旧错','第一步'),op(two.id,'缺字','独立条目'),op(one.id,'晚一步的错字','第二步'),
+    ]}),/待修/);
+    const [a,b]=c.currentBatch().patchRepair.groups.map(g=>g.pending[0].id);
+    const repair=(id,oldText,newText)=>c.onTool(job,'repair','repair_patches',{corrections:[{id,oldText,newText}]});
+    assert.deepEqual(await repair(b,two.content,'独立条目'),{status:'pending_patches',remaining:[a]});
+    await assert.rejects(repair(a,one.content,'第一步'),/待修/);
+    const [later]=c.currentBatch().patchRepair.groups;
+    assert.notEqual(later.pending[0].id,a);assert.equal(later.item.after.content,'第一步');
+    await repair(later.pending[0].id,'第一步','第二步');
+    assert.equal(c.currentBatch().patchRepair,undefined);
+    assert.deepEqual(c.currentBatch().items.map(i=>[i.target.id,i.before.content,i.after.content]),
+        [[two.id,two.content,'独立条目'],[one.id,one.content,'第二步']]);
+});

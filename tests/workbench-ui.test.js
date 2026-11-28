@@ -388,3 +388,16 @@ test('the retained key’s circle check confirms the named correction and disapp
     assert.match(view.body.querySelector('.mn-wb-report').textContent,/共1个.*旧 key.*隐藏认知/);
     assert.match(view.message.textContent,/已更新本次清单和下次保留清单/);
 });
+
+test('repair details render exact text on expansion and partial review only saves a draft',async()=>{
+    const {view,c,batch,writes,drafts,click}=setup();
+    batch.patchRepair={version:1,groups:[]};batch.reviewIndex=batch.items.length-1;
+    const failure={kind:'tool',message:'一段待修',patches:[{title:'合成目标',reason:'原文有多处匹配',oldText:'重复词',newText:'对应替换'}]};
+    Object.assign(c.job,{status:'interrupted',failure,messages:[{role:'assistant',kind:'failure',failure}]});
+    await view.open();
+    const details=view.body.querySelector('details details');assert.ok(details);
+    assert.doesNotMatch(details.textContent,/重复词/);
+    details.open=true;details.ontoggle();assert.match(details.textContent,/重复词.*对应替换/);
+    const dialog=reviewBatch(view);click(dialog,'暂存并返回');
+    await until(()=>drafts.length===1);assert.equal(writes.length,0);assert.equal(dialog.open,false);view.close();
+});
