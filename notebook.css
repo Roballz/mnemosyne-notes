@@ -354,6 +354,9 @@
 .mn-wb-properties {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:8px 0;}
 .mn-wb-properties .mn-field {font-size:12px;}
 .mn-wb-properties textarea {min-height:90px;}
+.mn-wb-clean-input>input {flex:1;min-width:0;}
+.mn-wb-clean-input>button {flex:none;}
+.mn-wb-clean-tags>.mn-chip {max-width:100%;white-space:normal;overflow-wrap:anywhere;text-align:left;}
 .mn-wb-channel {min-width:0;border:1px solid var(--line);border-radius:12px;padding:12px;display:grid;gap:10px;}
 .mn-wb-channel legend {color:var(--accent);font-size:12px;}
 .mn-wb-channels {display:grid;gap:12px;}

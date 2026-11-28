@@ -88,6 +88,56 @@ function setup(t, options = {}) {
 }
 const tick = () => new Promise(resolve => setImmediate(resolve));
 
+test('tag filters clean both API prompt paths and their chat macros without altering other materials', async t => {
+    const h = setup(t), cleanTags = ['<sxrp>', '<archive type="关系">'];
+    h.chat[0].mes = '保留用户正文<archive type="关系">正文隐藏甲</archive>';
+    h.chat[1].mes = '<sxrp guests="合成嘉宾">正文隐藏乙</sxrp>';
+    const original = copy(h.chat), selected = targets.map(target => ({ ...target, content: '<sxrp>所选材料 ' + target.id + '</sxrp>' }));
+    const historyBlock = '<sxrp>所选历史总结</sxrp>', messages = [{ role: 'user', content: '<sxrp>本轮工作台要求</sxrp>' }];
+    for (const sourceId of ['main', 'own']) {
+        const capture = await h.capture({ sourceId, channel: { model: 'synthetic-model' }, cleanTags, selectedTargets: selected, historyBlock });
+        assert.deepEqual(capture.rawMessages.map(m => m.content), original.map(m => m.mes));
+        assert.deepEqual(capture.promptMessages.map(m => [m.floor, m.content]), [[0, '保留用户正文'], [1, '']]);
+        const saved = runtimeCapture(capture);
+        assert.equal(saved.macro.chat.lastUserMessage, '保留用户正文');
+        assert.equal(saved.macro.chat.lastMessage, '');assert.equal(saved.macro.chat.lastCharMessage, '');
+        assert.doesNotMatch(JSON.stringify(saved.frozen), /正文隐藏甲|正文隐藏乙/);
+        const text = snapshotText((await assembleWorkbenchPrompt(capture, messages)).promptSnapshot);
+        assert.doesNotMatch(text, /正文隐藏甲|正文隐藏乙/);
+        assert.ok(text.includes('<workbench_floor index="1">\n\n</workbench_floor>'));
+        for (const target of selected) assert.ok(text.includes(target.content));
+        assert.ok(text.includes(historyBlock));assert.ok(text.includes(messages[0].content));
+    }
+    assert.deepEqual(h.chat, original);
+});
+
+test('filtered controller captures read once and source validation still detects changes inside removed blocks', async t => {
+    const h = setup(t), reads = [];
+    h.chat[0].mes = '保留<sxrp>旧隐藏正文</sxrp>';
+    const reader = { sync: async () => h.chat.length, read: async (first, end) => { reads.push([first, end]);return h.chat.slice(first, end); } };
+    const c = new WorkbenchController({
+        targets: { captureScope: async () => h.scope, listTargets: async () => ({ targets, worlds: [] }) },
+        captureHistory: () => assert.fail('manual archive must not read earlier history'), getDefaultPreset: () => '',
+        captureWorkbenchContext: options => captureWorkbenchContext({ ...options, runtime: h.runtime, reader }),
+    });
+    c.settings = settingsWithDefaults({ cleanTags: ['<sxrp>'] });
+    c.job = { mode: 'archive', manualArchive: true, scope: h.scope, firstFloor: 0, lastFloor: 1, selectedTargetIds: targets.map(t => t.id), batches: [] };
+    const capture = await c.preview();
+    assert.deepEqual(reads, [[0, 2]]);assert.equal(capture.promptMessages[0].content, '保留');
+    assert.deepEqual(c.job.config.cleanTags, ['<sxrp>']);
+    await c.verifySource(c.job);
+    h.chat[0].mes = '保留<sxrp>新隐藏正文</sxrp>';
+    await assert.rejects(() => c.verifySource(c.job), /原文已变化/);
+});
+
+test('a fully cleaned floor remains part of prompt budget validation', async t => {
+    const h = setup(t, { transform: messages => messages.filter(m => !m.content.includes('<workbench_floor index="1">')) });
+    h.chat[1].mes = '<sxrp>整楼隐藏</sxrp>';
+    const capture = await h.capture({ cleanTags: ['<sxrp>'] });
+    assert.equal(capture.promptMessages[1].content, '');
+    await assert.rejects(() => assembleWorkbenchPrompt(capture, task), /第 1 楼/);
+});
+
 test('native deep thinking, tool progress and output get a fresh idle window; a silent run stops once', async t => {
     t.mock.timers.enable({ apis: ['Date','setTimeout'] });
     t.mock.method(performance, 'now', () => Date.now());

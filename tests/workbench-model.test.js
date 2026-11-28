@@ -13,6 +13,18 @@ test('independent API settings do not inherit memory or story generation setting
     assert.throws(()=>validateSettings({...settings,generation:{...settings.generation,maxTokens:2000,contextSize:1000}}));
     assert.throws(()=>validateSettings({...settings,channels:[{id:'x',name:'x',url:'javascript:alert(1)',model:'x'}]}));
 });
+test('cleaning rules upgrade empty, normalize literally and survive settings serialization',()=>{
+    const legacy={schemaVersion:3,generation:{timeoutSec:900},tasks:{free:'保留我的提示'}};
+    const upgraded=settingsWithDefaults(legacy);
+    assert.equal(upgraded.schemaVersion,4);assert.deepEqual(upgraded.cleanTags,[]);
+    upgraded.cleanTags.push('<sxrp>');assert.deepEqual(DEFAULT_SETTINGS.cleanTags,[]);
+    const saved=validateSettings({...upgraded,cleanTags:['sxrp','<SXRP>','<archive type="关系">']});
+    assert.deepEqual(saved.cleanTags,['<sxrp>','<archive type="关系">']);
+    assert.deepEqual(settingsWithDefaults(JSON.parse(JSON.stringify(saved))),saved);
+    assert.equal(saved.generation.timeoutSec,900);assert.equal(saved.tasks.free,'保留我的提示');
+    assert.equal(legacy.schemaVersion,3);assert.equal(legacy.cleanTags,undefined);
+    assert.throws(()=>validateSettings({...saved,cleanTags:['<archive.*>']}));
+});
 test('workbench timeout defaults and legacy 180 seconds upgrade once, retaining custom settings',()=>{
     assert.equal(settingsWithDefaults().generation.timeoutSec,600);
     const legacy={schemaVersion:1,generation:{timeoutSec:180}};

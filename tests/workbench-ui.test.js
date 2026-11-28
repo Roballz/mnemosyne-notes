@@ -31,6 +31,83 @@ function setup(){
     const click=(host,label)=>{const el=[...host.querySelectorAll('button')].find(b=>b.textContent===label);assert.ok(el,label);el.click();};
     return {document,c,view,batch,writes,drafts,click};
 }
+test('clean tag settings add, deduplicate and remove rules, preserve IME input, and save only on confirmation', async () => {
+    const { view, c, document, click } = setup(), saved = [];
+    c.saveSettings = async value => { saved.push(structuredClone(value));c.settings = settingsWithDefaults(value); };
+    view.settings();let dialog = document.querySelector('dialog');
+    const input = dialog.querySelector('[aria-label="清洗标签"]'), chips = () => dialog.querySelectorAll('.mn-wb-clean-tags button');
+    input.value = 'sxrp';click(dialog, '添加标签');await until(() => chips().length === 1);
+    input.value = '<SXRp>';input.onkeydown({ key: 'Enter', preventDefault() {} });await until(() => input.value === '');
+    assert.equal(chips().length, 1);assert.deepEqual(c.settings.cleanTags, []);
+    input.value = '<archive type="关系">';
+    input.onkeydown({ key: 'Enter', isComposing: true, preventDefault: () => assert.fail('IME confirmation must not add a rule') });
+    assert.equal(chips().length, 1);assert.equal(input.value, '<archive type="关系">');
+    input.onkeydown({ key: 'Enter', isComposing: false, preventDefault() {} });await until(() => chips().length === 2);
+    dialog.querySelector('[aria-label="删除清洗标签 <sxrp>"]').click();assert.equal(chips().length, 1);
+    input.value = '<note>';click(dialog, '保存设置');await until(() => !document.querySelector('dialog'));
+    assert.equal(saved.length, 1);assert.deepEqual(c.settings.cleanTags, ['<archive type="关系">', '<note>']);
+    view.settings();dialog = document.querySelector('dialog');
+    assert.equal(dialog.querySelectorAll('.mn-wb-clean-tags button').length, 2);
+    dialog.querySelector('[aria-label="清洗标签"]').value = '<discarded>';click(dialog, '添加标签');
+    await until(() => dialog.querySelectorAll('.mn-wb-clean-tags button').length === 3);dialog.close();
+    assert.equal(saved.length, 1);assert.deepEqual(c.settings.cleanTags, ['<archive type="关系">', '<note>']);
+});
+
+test('actual request material preview displays the cleaned projection including an empty floor', async () => {
+    const { view, c, document, click } = setup();
+    c.preview = async () => ({ firstFloor: 0, lastFloor: 1, historyBlock: '历史总结', selectedTargets: [], cleanTags: ['<sxrp>'],
+        rawMessages: [{ floor: 0, role: 'user', content: '<sxrp>隐藏原文甲</sxrp>' }, { floor: 1, role: 'assistant', content: '保留正文<sxrp>隐藏原文乙</sxrp>' }],
+        promptMessages: [{ floor: 0, role: 'user', content: '' }, { floor: 1, role: 'assistant', content: '保留正文' }],
+    });
+    view.range();click(document.querySelector('dialog'), '查看实际请求材料');
+    const preview = await until(() => document.querySelector('dialog[aria-label="本次请求材料预览"]'));
+    assert.doesNotMatch(preview.textContent, /隐藏原文甲|隐藏原文乙/);
+    assert.match(preview.textContent, /保留正文/);assert.match(preview.textContent, /#0 · user/);
+    assert.match(preview.textContent, /已应用 1 条清洗规则/);preview.close();
+});
+
+test('clean tag imports merge valid rules in the draft and reject invalid files without losing existing rules', async () => {
+    const { view, c, document, click } = setup();c.settings.cleanTags = ['<sxrp>'];
+    c.saveSettings = async value => { c.settings = settingsWithDefaults(value); };
+    view.settings();const dialog = document.querySelector('dialog'), file = dialog.querySelector('input[type="file"]');
+    const load = async data => {
+        Object.defineProperty(file, 'files', { configurable: true, value: [{ size: 100, text: async () => JSON.stringify(data) }] });
+        await file.onchange();
+    };
+    await load({ kind: 'mnemosyne-clean-tags', version: 1, cleanTags: ['<SXRp>', '<archive type="关系">'] });
+    assert.equal(dialog.querySelectorAll('.mn-wb-clean-tags button').length, 2);assert.deepEqual(c.settings.cleanTags, ['<sxrp>']);
+    await load({ kind: 'unrelated-file', version: 1, cleanTags: ['<discarded>'] });
+    assert.match(dialog.querySelector('.mn-error').textContent, /清洗标签文件/);
+    assert.equal(dialog.querySelectorAll('.mn-wb-clean-tags button').length, 2);
+    click(dialog, '保存设置');await until(() => !document.querySelector('dialog'));
+    assert.deepEqual(c.settings.cleanTags, ['<sxrp>', '<archive type="关系">']);
+});
+
+test('a closed settings dialog cannot report a late tag import error into the next dialog', async () => {
+    const { view, c, document } = setup();view.settings();
+    const stale = document.querySelector('dialog'), file = stale.querySelector('input[type="file"]');
+    let finish;
+    Object.defineProperty(file, 'files', { value: [{ size: 100, text: () => new Promise(resolve => { finish = resolve; }) }] });
+    const pending = file.onchange();await until(() => finish);
+    stale.close();view.settings();finish('invalid JSON');await pending;
+    const current = document.querySelector('dialog');
+    assert.equal(current.querySelector('.mn-error'), null);assert.deepEqual(c.settings.cleanTags, []);
+    assert.equal(current.querySelectorAll('.mn-wb-clean-tags button').length, 0);current.close();
+});
+
+test('saving during an invalid tag import waits and keeps the error visible instead of saving old rules', async () => {
+    const { view, c, document } = setup(), saved = [];
+    c.saveSettings = async value => { saved.push(value); };view.settings();
+    const dialog = document.querySelector('dialog'), file = dialog.querySelector('input[type="file"]');
+    let finish;
+    Object.defineProperty(file, 'files', { value: [{ size: 100, text: () => new Promise(resolve => { finish = resolve; }) }] });
+    const importing = file.onchange();await until(() => finish);
+    const saving = [...dialog.querySelectorAll('button')].find(button => button.textContent === '保存设置').onclick();
+    await Promise.resolve();finish('invalid JSON');await Promise.all([importing, saving]);
+    assert.equal(saved.length, 0);assert.equal(dialog.open, true);assert.ok(dialog.querySelector('.mn-error'));
+    dialog.close();
+});
+
 test('sequential review edits directly, skips one target, and saves only at final button',async()=>{
     const {view,document,writes,drafts,click}=setup();const dialog=reviewBatch(view);
     await until(()=>dialog.querySelector('.mn-wb-add'));
