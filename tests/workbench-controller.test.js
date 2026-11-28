@@ -38,13 +38,13 @@ test('switching mode retains the unfinished archive task and starts free mode wi
     const free=await c.newJob();assert.equal(free.mode,'free');assert.notEqual(free.id,job.id);
     c.running=true;await assert.rejects(()=>c.switchMode('archive'),/停止|等待/);assert.equal(c.job,free);
 });
-test('manual archive onboarding retries an existing gap in place and never requests the old history',async()=>{
+test('manual archive resumes at its cursor with available history and carries retained keys into the next task',async()=>{
     const {c,jobs,settings,saved}=setup();
-    let historyCalls=0;
+    const historyCutoffs=[];
     const captures=[],requests=[];
-    c.api.captureHistory=async()=>{
-        historyCalls++;
-        return {available:true,coverage:{complete:false},warnings:['1034 个正文楼层未覆盖']};
+    c.api.captureHistory=async({firstFloor})=>{
+        historyCutoffs.push(firstFloor);
+        return {available:true,text:'已核实前情 '+firstFloor,coverage:{complete:false},warnings:['1034 个正文楼层未覆盖']};
     };
     c.api.captureWorkbenchContext=async options=>{
         captures.push(options);
@@ -70,33 +70,44 @@ test('manual archive onboarding retries an existing gap in place and never reque
     await c.resume(failed.id);
     await c.send('',{retry:true});
     assert.equal(c.job.id,failed.id);assert.equal(c.job.status,'discussion');
-    assert.deepEqual(captures.map(x=>[x.firstFloor,x.lastFloor,x.historyBlock]),[[105,250,'']]);
+    assert.deepEqual(captures.map(x=>[x.firstFloor,x.lastFloor,x.historyBlock]),[[105,250,'已核实前情 105']]);
     assert.deepEqual(captures[0].selectedTargets.map(t=>t.id),['world:w:1','world:w:2']);
     assert.deepEqual(requests[0][0],{role:'user',content:'整理新的 rolling'});
-    assert.match(requests[0].at(-1).content,/以所选设定衔接前情/);
-    assert.equal(historyCalls,1);assert.equal(saved.length,0);
+    assert.match(requests[0].at(-1).content,/只整理固定正文范围/);
+    assert.deepEqual(c.job.carry,[]);
+    assert.deepEqual(historyCutoffs,[100,105]);assert.equal(saved.length,0);
     await c.send('可以，开始吧');
     assert.equal(c.job.status,'planned');assert.equal(captures.at(-1).discussionOnly,true);
-    assert.equal(historyCalls,1);
+    assert.deepEqual(historyCutoffs,[100,105]);
+    const retained={key:'上轮未收束',reason:'仍在进行',into:['world:w:1']};
     c.api.runWorkbench=async(_,options)=>{
-        await options.onTool('propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'新归档'}]});
+        await options.onTool('propose_changes',{operations:[{action:'replace',target:'world:w:1',content:'新归档'}],report:{retained:[retained]}});
         return {text:'请审核本批'};
     };
     await c.send('',{execute:true});
     assert.equal(c.job.status,'review');
+    assert.equal(captures.at(-1).historyBlock,'已核实前情 105');
     assert.equal(saved.length,0);
     await c.saveReviewed(c.currentBatch().items);
     assert.equal(settings.get(scope.chatKey).archivedFloor,250);
     c.api.latestFloor=async()=>270;
-    await c.newJob();await c.preview();
+    await c.newJob();
+    // Resume a job persisted by 0.2.12, which recorded only the manual source.
+    jobs.get(c.job.id).history={source:'manualArchive'};
+    await c.resume(c.job.id);
+    await c.preview();
+    assert.equal(captures.at(-1).historyBlock,'已核实前情 250');
+    assert.equal(c.job.history.coverage.complete,false);
+    assert.deepEqual(c.job.carry,[retained]);
+    assert.deepEqual(settings.get(scope.chatKey).retained,[retained]);
     assert.deepEqual(captures.filter(x=>!x.discussionOnly).map(x=>[x.firstFloor,x.lastFloor]),[[105,250],[105,250],[250,270]]);
-    assert.equal(historyCalls,1);
+    assert.deepEqual(historyCutoffs,[100,105,105,250]);
     await c.setArchivedFloor(250,false);
     await assert.rejects(()=>c.preview(),/缺口/);
-    assert.equal(historyCalls,2);
+    assert.deepEqual(historyCutoffs,[100,105,105,250,250]);
 });
 
-test('manual archive source stays scoped to one chat and to archive mode',async()=>{
+test('manual continuation allows history gaps only for its chat and leaves free-mode history intact',async()=>{
     const {c,settings}=setup();let historyCalls=0;
     c.api.captureHistory=async()=>{historyCalls++;return {available:true,text:'之前的历史总结',coverage:{complete:false}};};
     c.api.captureWorkbenchContext=async options=>({...options,rawMessages:[]});
@@ -106,7 +117,7 @@ test('manual archive source stays scoped to one chat and to archive mode',async(
     await c.saveState({mode:'free'});
     const free=await c.preview();assert.equal(free.historyBlock,'之前的历史总结');assert.equal(historyCalls,1);
     await c.saveState({mode:'archive'});
-    const manual=await c.preview();assert.equal(manual.historyBlock,'');assert.equal(historyCalls,1);
+    const manual=await c.preview();assert.equal(manual.historyBlock,'之前的历史总结');assert.equal(historyCalls,2);
     c.api.captureWorkbenchContext=async()=>{throw Error('正文楼层未完整返回');};
     await assert.rejects(()=>c.preview(),/正文楼层未完整返回/);
 });

@@ -117,7 +117,7 @@ test('filtered controller captures read once and source validation still detects
     const reader = { sync: async () => h.chat.length, read: async (first, end) => { reads.push([first, end]);return h.chat.slice(first, end); } };
     const c = new WorkbenchController({
         targets: { captureScope: async () => h.scope, listTargets: async () => ({ targets, worlds: [] }) },
-        captureHistory: () => assert.fail('manual archive must not read earlier history'), getDefaultPreset: () => '',
+        getDefaultPreset: () => '',
         captureWorkbenchContext: options => captureWorkbenchContext({ ...options, runtime: h.runtime, reader }),
     });
     c.settings = settingsWithDefaults({ cleanTags: ['<sxrp>'] });
@@ -179,6 +179,9 @@ test('old native timeout can read its recent stages without retrying or showing 
 
 test('mid-chat archive preview reads only the inclusive range from a windowed chat', async t => {
     const h = setup(t);
+    h.runtime.api.chat.current.windowInfo = async () => ({ windowStartIndex: 1034, totalCount: 1036 });
+    globalThis.STMnemosyne = { getHistory: () => assert.fail('window-relative floors cannot represent this absolute cutoff') };
+    t.after(() => { delete globalThis.STMnemosyne; });
     const reads = [];
     const reader = { offset: 1034, sync: async () => 1036, read: async (first, end) => {
         reads.push([first, end]);
@@ -187,7 +190,6 @@ test('mid-chat archive preview reads only the inclusive range from a windowed ch
     } };
     const c = new WorkbenchController({
         targets: { captureScope: async () => h.scope, listTargets: async () => ({ targets, worlds: [] }) },
-        captureHistory: () => assert.fail('manually archived prefix must not be scanned'),
         getDefaultPreset: () => '',
         captureWorkbenchContext: options => captureWorkbenchContext({ ...options, runtime: h.runtime, reader }),
     });
@@ -202,6 +204,42 @@ test('mid-chat archive preview reads only the inclusive range from a windowed ch
     assert.match(prompt, /<workbench_floor index="1035">/);
     assert.ok(prompt.includes(targetMaterial(targets.at(-1))));
     assert.doesNotMatch(prompt, /<workbench_history/);
+    assert.match(c.job.history.warnings.join(' '), /窗口化/);
+});
+
+test('manual archive sends verified prefix summaries before the requested floors without rereading covered story text', async t => {
+    const h = setup(t), calls = [], reads = [];
+    const firstFloor = 2015, lastFloor = 2115;
+    h.chat.length = lastFloor + 1;
+    h.chat.fill({ mes: '已归档的旧原文' }, 0, firstFloor);
+    for (let i = firstFloor; i <= lastFloor; i++) h.chat[i] = { mes: '本轮正文 ' + i };
+    h.ctx.chat = new Proxy(h.chat, { get(chat, key) {
+        if (/^\d+$/.test(String(key)) && Number(key) < 2014) assert.fail('already covered floor was read');
+        return Reflect.get(chat, key);
+    } });
+    const text = 'L2 旧事\n\nL0 衔接线索';
+    h.ctx.getCurrentChatId = () => 'story';
+    globalThis.STMnemosyne = { getHistory({ before }) {
+        calls.push(before);
+        return { apiVersion: 1, chat: { id: 'story' }, before, text, nodes: [
+            { id: 'early', level: 2, text: 'L2 旧事', floorStart: 0, floorEnd: 2012 },
+            { id: 'leaf', level: 0, text: 'L0 衔接线索', floorStart: 2013, floorEnd: 2013 },
+        ], coverage: { complete: false, missingAiFloors: [2014] } };
+    } };
+    t.after(() => { delete globalThis.STMnemosyne; });
+    const reader = { sync: async () => h.chat.length, read: async (first, end) => { reads.push([first,end]); return h.chat.slice(first,end); } };
+    const c = new WorkbenchController({
+        targets: { captureScope: async () => h.scope, listTargets: async () => ({targets}) },
+        captureWorkbenchContext: options => captureWorkbenchContext({...options, runtime: h.runtime, reader}),
+    });
+    c.settings = settingsWithDefaults();
+    c.job = { mode: 'archive', manualArchive: true, scope: h.scope, firstFloor, lastFloor, selectedTargetIds: [], batches: [] };
+    const capture = await c.captureFor(c.job, 'discuss');
+    const prompt = snapshotText((await assembleWorkbenchPrompt(capture, task)).promptSnapshot);
+    assert.deepEqual(calls,[2015]); assert.deepEqual(reads,[[2015,2116]]);
+    assert.match(prompt, /<workbench_history before="2015">[\s\S]*L2 旧事[\s\S]*L0 衔接线索[\s\S]*<workbench_floor index="2015">[\s\S]*<workbench_floor index="2115">/);
+    assert.doesNotMatch(prompt, /已归档的旧原文/);
+    assert.match(c.job.history.warnings.join(' '), /1 个正文楼层缺少/);
 });
 
 test('capture preserves hidden raw body and rolling, freezes its range, and carries labelled selected materials only', async t => {

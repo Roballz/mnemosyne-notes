@@ -42,7 +42,15 @@ test('public coverage 的假完整不能掩盖跨界导入摘要被遗漏造成�
     const result = await captureHistory({ firstFloor: 4, lastFloor: 4, scope });
     assert.equal(result.coverage.complete, false);
     assert.deepEqual(result.coverage.missingAiFloors, [2]);
-    assert.match(result.warnings.join(' '), /未被本次历史摘要覆盖/);
+    assert.match(result.warnings.join(' '), /缺少历史摘要/);
+});
+
+test('楼层无法核实的返回不作为部分前情发送', async () => {
+    const { scope } = setup([ai(), ai()], [node(0, null)]);
+    const result = await captureHistory({ firstFloor: 1, lastFloor: 1, scope });
+    assert.equal(result.coverage.complete, false);
+    assert.equal(result.block, null);
+    assert.match(result.warnings.join(' '), /未附加历史总结/);
 });
 
 test('隐藏真实回复仍计覆盖，原生系统楼、番外和内部提示楼不误报缺摘要', async () => {
